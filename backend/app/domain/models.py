@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional, Tuple, Dict, Any, Literal
 # pyrefly: ignore [missing-import]
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, computed_field
 
 
 class CoordinatePoint(BaseModel):
@@ -123,11 +123,26 @@ class EnvironmentalState(BaseModel):
         description="Dataset provenance identification",
     )
 
+    units: Dict[str, str] = Field(
+        default_factory=lambda: {
+            "wind_u": "m/s",
+            "wind_v": "m/s",
+            "wind_speed": "m/s",
+            "wind_direction": "degrees_from_north (meteorological)",
+            "current_u": "m/s",
+            "current_v": "m/s",
+            "current_speed": "m/s",
+            "current_direction": "degrees_to_north (oceanographic)",
+        },
+        description="Physical units specification",
+    )
+
     def model_post_init(self, __context) -> None:
         if self.location is None:
             self.location = CoordinatePoint(latitude=self.latitude, longitude=self.longitude)
 
     # Derived physical properties
+    @computed_field
     @property
     def wind_speed(self) -> float:
         if self.wind_u is None or self.wind_v is None:
@@ -139,6 +154,7 @@ class EnvironmentalState(BaseModel):
         """Alias for wind_speed."""
         return self.wind_speed
 
+    @computed_field
     @property
     def wind_direction(self) -> float:
         """
@@ -150,6 +166,7 @@ class EnvironmentalState(BaseModel):
         deg = (math.atan2(-self.wind_u, -self.wind_v) * 180.0 / math.pi + 360.0) % 360.0
         return round(deg, 1)
 
+    @computed_field
     @property
     def current_speed(self) -> float:
         if self.current_u is None or self.current_v is None:
@@ -161,6 +178,7 @@ class EnvironmentalState(BaseModel):
         """Alias for current_speed."""
         return self.current_speed
 
+    @computed_field
     @property
     def current_direction(self) -> float:
         """

@@ -1,10 +1,54 @@
 import { API_BASE_URL } from '../config/api';
-import { SpillDetection, ValidationMetrics } from '../types/contracts';
+import { SpillDetection, ValidationMetrics, DriftResult, EnvironmentalState } from '../types/contracts';
 
 export interface HealthResponse {
   status: string;
   mode: string;
   service: string;
+}
+
+export interface MetoceanPointRequest {
+  latitude: number;
+  longitude: number;
+  timestamp?: string;
+  wind_speed_ms?: number;
+  wind_direction_deg?: number;
+  current_speed_ms?: number;
+  current_direction_deg?: number;
+  wind_u?: number;
+  wind_v?: number;
+  current_u?: number;
+  current_v?: number;
+}
+
+export interface DriftSimulationRequest {
+  spill?: SpillDetection;
+  latitude?: number;
+  longitude?: number;
+  area_km2?: number;
+  observation_time?: string;
+  max_hindcast_hours?: number;
+  forecast_hours?: number;
+  particle_count?: number;
+  timestep_minutes?: number;
+  leeway_factor?: number;
+  leeway_deflection_deg?: number;
+  horizontal_diffusivity?: number;
+  random_seed?: number;
+  wind_speed_ms?: number;
+  wind_direction_deg?: number;
+  current_speed_ms?: number;
+  current_direction_deg?: number;
+  wind_u?: number;
+  wind_v?: number;
+  current_u?: number;
+  current_v?: number;
+}
+
+export interface DriftSimulationResponse {
+  drift_result: DriftResult;
+  environmental_snapshot: EnvironmentalState;
+  model_parameters: Record<string, any>;
 }
 
 export class ApiError extends Error {
@@ -154,4 +198,69 @@ export const apiClient = {
     }
     return (await res.json()) as ValidationMetrics;
   },
+
+  /**
+   * Query metocean wind and ocean currents at a geographic point (/api/metocean/point).
+   */
+  async getMetoceanPoint(request: MetoceanPointRequest, timeoutMs = 10000): Promise<EnvironmentalState> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/metocean/point`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new ApiError(errData.detail || `Metocean query failed (HTTP ${res.status})`, res.status);
+      }
+
+      return (await res.json()) as EnvironmentalState;
+    } catch (err: unknown) {
+      if ((err as Error).name === 'AbortError') {
+        throw new ApiError(`Metocean request timed out after ${timeoutMs}ms`, 408);
+      }
+      if (err instanceof ApiError) throw err;
+      throw new ApiError(`Error connecting to metocean API: ${(err as Error).message}`, 0);
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
+  /**
+   * Run Runge-Kutta 2nd-order (RK2) Lagrangian backward drift hindcasting (/api/drift/simulate).
+   */
+  async simulateDrift(request: DriftSimulationRequest, timeoutMs = 25000): Promise<DriftSimulationResponse> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/drift/simulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new ApiError(errData.detail || `Drift simulation failed (HTTP ${res.status})`, res.status);
+      }
+
+      return (await res.json()) as DriftSimulationResponse;
+    } catch (err: unknown) {
+      if ((err as Error).name === 'AbortError') {
+        throw new ApiError(`Drift simulation timed out after ${timeoutMs}ms`, 408);
+      }
+      if (err instanceof ApiError) throw err;
+      throw new ApiError(`Error connecting to drift simulation API: ${(err as Error).message}`, 0);
+    } finally {
+      clearTimeout(timer);
+    }
+  },
 };
+

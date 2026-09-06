@@ -78,6 +78,13 @@ export interface EnvironmentalState {
   wind_v: number; // m/s (ERA5 v10)
   current_u: number; // m/s (CMEMS)
   current_v: number; // m/s (CMEMS)
+  wind_speed?: number; // m/s
+  wind_direction?: number; // degrees FROM north (meteorological)
+  current_speed?: number; // m/s
+  current_direction?: number; // degrees TOWARDS north (oceanographic)
+  quality_flags?: Record<string, string>;
+  source?: Record<string, string>;
+  units?: Record<string, string>;
 }
 
 // ----------------------------------------------------------------------

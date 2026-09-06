@@ -6,6 +6,8 @@ from backend.app.api.v1.endpoints_sar import router as sar_router
 from backend.app.api.v1.endpoints_ais import router as ais_router
 from backend.app.api.v1.endpoints_attribution import router as attribution_router
 from backend.app.api.v1.endpoints_validation import router as validation_router
+from backend.app.api.v1.endpoints_metocean import router as metocean_router
+from backend.app.api.v1.endpoints_drift import router as drift_router
 
 app = FastAPI(
     title="Oil Spill Source Attribution API",
@@ -27,6 +29,8 @@ app.include_router(sar_router)
 app.include_router(ais_router)
 app.include_router(attribution_router)
 app.include_router(validation_router)
+app.include_router(metocean_router)
+app.include_router(drift_router)
 
 
 @app.get("/health", tags=["System"])

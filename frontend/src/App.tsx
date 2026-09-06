@@ -12,7 +12,7 @@ import { JudgeDemoModal } from './components/JudgeDemoModal';
 import { investigationService } from './services/investigationAdapter';
 import { apiClient } from './services/apiClient';
 import { ScenarioPreset, InvestigationInput } from './services/adapterInterface';
-import { InvestigationSummary, VesselEvidence } from './types/contracts';
+import { InvestigationSummary, VesselEvidence, DriftResult, EnvironmentalState } from './types/contracts';
 
 export const App: React.FC = () => {
   const [scenarios, setScenarios] = useState<ScenarioPreset[]>([]);
@@ -125,8 +125,75 @@ export const App: React.FC = () => {
         const detection = await apiClient.analyzeSarImage(formData);
 
         // Map real detection into InvestigationSummary structure
-        // Subsequent modules (Drift, AIS, Attribution) are denoted as uncomputed for Phase 2
         const timestampIso = `${input.observationDate}T${input.observationTime}:00Z`;
+
+        let driftResult: DriftResult = {
+          source_centroid: detection.centroid,
+          particle_count: 0,
+          drift_duration_hours: 0,
+          release_time_window: {
+            earliest: timestampIso,
+            most_probable: timestampIso,
+            latest: timestampIso,
+            slick_age_hours_range: [0, 0] as [number, number],
+          },
+          source_region: { type: 'Polygon' as const, coordinates: [] },
+          particle_trajectories: [],
+          uncertainty: {
+            spatial_radius_km: 0,
+            major_semi_axis_km: 0,
+            minor_semi_axis_km: 0,
+            diffusion_coefficient: 0,
+            confidence_level: 0,
+          },
+        };
+
+        let envSnapshot: EnvironmentalState = {
+          timestamp: timestampIso,
+          latitude: detection.centroid.latitude,
+          longitude: detection.centroid.longitude,
+          wind_u: 0,
+          wind_v: 0,
+          current_u: 0,
+          current_v: 0,
+        };
+
+        // Phase 3: If an oil spill is confirmed, advect particles backward using numerical Lagrangian RK2 drift engine
+        if (detection.detected) {
+          try {
+            const driftSim = await apiClient.simulateDrift({
+              spill: detection,
+              observation_time: timestampIso,
+              max_hindcast_hours: 18.0,
+              forecast_hours: 12.0,
+              particle_count: 100,
+              timestep_minutes: 30.0,
+              wind_speed_ms: input.windSpeedMs,
+              wind_direction_deg: input.windDirectionDeg,
+              current_speed_ms: input.currentSpeedMs,
+              current_direction_deg: input.currentDirectionDeg,
+            });
+            driftResult = driftSim.drift_result;
+            envSnapshot = driftSim.environmental_snapshot;
+          } catch (driftErr) {
+            console.warn('Drift simulation error:', driftErr);
+            // Fallback to point metocean snapshot if full drift simulation fails
+            try {
+              envSnapshot = await apiClient.getMetoceanPoint({
+                latitude: detection.centroid.latitude,
+                longitude: detection.centroid.longitude,
+                timestamp: timestampIso,
+                wind_speed_ms: input.windSpeedMs,
+                wind_direction_deg: input.windDirectionDeg,
+                current_speed_ms: input.currentSpeedMs,
+                current_direction_deg: input.currentDirectionDeg,
+              });
+            } catch {
+              // ignore fallback error
+            }
+          }
+        }
+
         const realSummary: InvestigationSummary = {
           investigation_id: `REAL-${Date.now().toString(36).toUpperCase()}`,
           status: 'completed',
@@ -141,35 +208,8 @@ export const App: React.FC = () => {
             resolution: 10.0,
           },
           spill_detection: detection,
-          environmental_snapshot: {
-            timestamp: timestampIso,
-            latitude: detection.centroid.latitude,
-            longitude: detection.centroid.longitude,
-            wind_u: 0,
-            wind_v: 0,
-            current_u: 0,
-            current_v: 0,
-          },
-          drift_result: {
-            source_centroid: detection.centroid,
-            particle_count: 0,
-            drift_duration_hours: 0,
-            release_time_window: {
-              earliest: timestampIso,
-              most_probable: timestampIso,
-              latest: timestampIso,
-              slick_age_hours_range: [0, 0],
-            },
-            source_region: { type: 'Polygon', coordinates: [] },
-            particle_trajectories: [],
-            uncertainty: {
-              spatial_radius_km: 0,
-              major_semi_axis_km: 0,
-              minor_semi_axis_km: 0,
-              diffusion_coefficient: 0,
-              confidence_level: 0,
-            },
-          },
+          environmental_snapshot: envSnapshot,
+          drift_result: driftResult,
           candidate_vessels: [],
           top_candidate: null,
           insufficient_evidence_reason: detection.detected
@@ -192,6 +232,36 @@ export const App: React.FC = () => {
           ...input,
           scenarioId: activeScenarioId,
         });
+
+        // If user specified environmental overrides in demo mode and backend is online,
+        // dynamically re-run drift simulation with the real Lagrangian engine to demonstrate sensitivity
+        if (
+          backendOnline &&
+          (input.windSpeedMs !== undefined ||
+            input.windDirectionDeg !== undefined ||
+            input.currentSpeedMs !== undefined ||
+            input.currentDirectionDeg !== undefined)
+        ) {
+          try {
+            const timestampIso = `${input.observationDate}T${input.observationTime}:00Z`;
+            const driftSim = await apiClient.simulateDrift({
+              spill: summary.spill_detection,
+              observation_time: timestampIso,
+              max_hindcast_hours: summary.drift_result.drift_duration_hours || 18.0,
+              forecast_hours: 12.0,
+              particle_count: summary.drift_result.particle_count || 100,
+              wind_speed_ms: input.windSpeedMs,
+              wind_direction_deg: input.windDirectionDeg,
+              current_speed_ms: input.currentSpeedMs,
+              current_direction_deg: input.currentDirectionDeg,
+            });
+            summary.drift_result = driftSim.drift_result;
+            summary.environmental_snapshot = driftSim.environmental_snapshot;
+          } catch (driftErr) {
+            console.warn('Custom drift simulation in demo mode failed, using preset:', driftErr);
+          }
+        }
+
         setInvestigation(summary);
         if (summary.candidate_vessels.length > 0) {
           setSelectedVesselMmsi(summary.candidate_vessels[0].mmsi);
@@ -237,7 +307,7 @@ export const App: React.FC = () => {
         activeScenarioId={activeScenarioId}
         scenarios={scenarios}
         onSelectScenario={handleSelectScenario}
-        activeStepIndex={appMode === 'real' ? 1 : isInsufficientEvidence ? 4 : 5}
+        activeStepIndex={appMode === 'real' ? (investigation.drift_result.particle_count > 0 ? 3 : 1) : isInsufficientEvidence ? 4 : 5}
         onOpenJudgeDemo={() => setIsJudgeDemoModalOpen(true)}
         onOpenValidation={() => setIsValidationModalOpen(true)}
         appMode={appMode}
