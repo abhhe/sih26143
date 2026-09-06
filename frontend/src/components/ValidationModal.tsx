@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, ShieldCheck, RefreshCw, AlertTriangle, CheckCircle2, TrendingUp, Info } from 'lucide-react';
 import { ValidationMetrics, SensitivityPerturbation } from '../types/contracts';
+import { API_BASE_URL } from '../config/api';
 
 interface ValidationModalProps {
   isOpen: boolean;
@@ -100,7 +101,7 @@ export const ValidationModal: React.FC<ValidationModalProps> = ({ isOpen, onClos
     if (!isOpen) return;
     async function fetchMetrics() {
       try {
-        const res = await fetch('http://localhost:8000/api/validation/metrics');
+        const res = await fetch(`${API_BASE_URL}/api/validation/metrics`);
         if (res.ok) {
           const data = await res.json();
           setMetrics(data);
@@ -119,7 +120,7 @@ export const ValidationModal: React.FC<ValidationModalProps> = ({ isOpen, onClos
     setIsRunning(true);
     setStatusMessage('Executing Monte Carlo validation suite (25 simulations)...');
     try {
-      const res = await fetch('http://localhost:8000/api/validation/run', {
+      const res = await fetch(`${API_BASE_URL}/api/validation/run`, {
         method: 'POST',
       });
       if (res.ok) {
