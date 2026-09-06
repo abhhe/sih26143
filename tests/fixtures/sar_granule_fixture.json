@@ -1,0 +1,24 @@
+{
+  "image_id": "S1A_IW_GRDH_1SDV_20260814T061522_054321_066F12_B1A4",
+  "timestamp": "2026-08-14T06:15:22Z",
+  "latitude": 56.4500,
+  "longitude": 3.2000,
+  "image_path": "data/sample_sar/S1A_NORTH_SEA_20260814.tiff",
+  "sensor": "Sentinel-1A C-SAR",
+  "resolution": 10.0,
+  "polarization": ["VV", "VH"],
+  "orbit_direction": "DESCENDING",
+  "incidence_angle_range": [32.4, 38.1],
+  "bounding_box": {
+    "min_latitude": 56.3500,
+    "min_longitude": 3.0800,
+    "max_latitude": 56.5500,
+    "max_longitude": 3.3200
+  },
+  "extra_metadata": {
+    "swath_mode": "IW",
+    "product_type": "GRD",
+    "pixel_spacing_m": 10.0,
+    "relative_orbit": 142
+  }
+}

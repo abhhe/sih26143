@@ -1,0 +1,37 @@
+{
+  "patch_id": "CSIRO_S1_OIL_0042_VV",
+  "source_dataset": "CSIRO Sentinel-1 SAR Oil Spill Dataset",
+  "label": "oil_spill",
+  "confidence": 0.95,
+  "acquisition_time": "2026-08-14T06:15:22Z",
+  "sensor": "Sentinel-1A C-SAR",
+  "polarization": "VV",
+  "resolution_m": 10.0,
+  "centroid": {
+    "latitude": 56.4520,
+    "longitude": 3.2040
+  },
+  "bounding_box": {
+    "min_latitude": 56.4310,
+    "min_longitude": 3.1650,
+    "max_latitude": 56.4730,
+    "max_longitude": 3.2430
+  },
+  "area_km2": 4.82,
+  "perimeter_km": 11.4,
+  "orientation_deg": 248.5,
+  "thickness_class": "dark_thick",
+  "look_alike_risk": "low",
+  "polygon_coordinates": [
+    [
+      [3.165, 56.435],
+      [3.180, 56.442],
+      [3.210, 56.460],
+      [3.243, 56.473],
+      [3.238, 56.468],
+      [3.215, 56.452],
+      [3.190, 56.439],
+      [3.165, 56.435]
+    ]
+  ]
+}

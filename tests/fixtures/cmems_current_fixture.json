@@ -1,0 +1,28 @@
+{
+  "dataset": "GLOBAL_ANALYSISFORECAST_PHY_001_024 (Copernicus Marine Service)",
+  "variables": {
+    "uo": "Eastward sea-water velocity (m s**-1)",
+    "vo": "Northward sea-water velocity (m s**-1)"
+  },
+  "timestamp": "2026-08-14T06:00:00Z",
+  "latitude": 56.4500,
+  "longitude": 3.2000,
+  "uo": 0.32,
+  "vo": 0.14,
+  "current_speed_ms": 0.349,
+  "current_direction_to_deg": 66.37,
+  "grid": {
+    "lats": [56.25, 56.50, 56.75],
+    "lons": [3.00, 3.25, 3.50],
+    "uo": [
+      [0.28, 0.30, 0.31],
+      [0.30, 0.32, 0.33],
+      [0.31, 0.33, 0.35]
+    ],
+    "vo": [
+      [0.11, 0.13, 0.14],
+      [0.12, 0.14, 0.15],
+      [0.13, 0.15, 0.16]
+    ]
+  }
+}
