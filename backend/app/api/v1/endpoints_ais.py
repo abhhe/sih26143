@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Body
 from pydantic import BaseModel, Field
 
@@ -33,6 +33,15 @@ class AISCandidateRequest(BaseModel):
     ais_dataset_path: Optional[str] = Field(
         None, description="Optional custom CSV filepath for AIS trajectory data"
     )
+    raw_pings: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Optional in-memory list of raw AIS position ping dictionaries"
+    )
+    temporal_tolerance_hours: Optional[float] = Field(
+        default=3.0, ge=0.0, le=48.0, description="Temporal tolerance buffer around release window (hours)"
+    )
+    app_mode: Optional[str] = Field(
+        None, description="Runtime execution mode ('DEMO' or 'REAL')"
+    )
 
 
 @router.post(
@@ -52,14 +61,20 @@ async def analyze_ais_candidates(
     request: AISCandidateRequest = Body(...),
 ) -> List[CandidateVesselFeatures]:
     try:
+        ais_input = request.raw_pings if request.raw_pings is not None else request.ais_dataset_path
         candidates = analyzer.analyze_candidates(
             probable_source_region=request.probable_source_region,
             release_time_window=request.release_time_window,
             spatial_radius_km=request.spatial_radius_km,
-            ais_dataset=request.ais_dataset_path,
+            ais_dataset=ais_input,
             source_centroid=request.source_centroid,
+            temporal_tolerance_hours=request.temporal_tolerance_hours,
+            app_mode=request.app_mode,
         )
         return candidates
+    except ValueError as ve:
+        logger.warning(f"Validation issue during AIS candidate analysis: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.error(f"Error during AIS candidate analysis: {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))

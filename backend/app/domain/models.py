@@ -330,6 +330,15 @@ class CandidateVesselFeatures(BaseModel):
     sanitized_pings_count: int = Field(default=0, description="Valid pings retained after quality filtering")
     rejected_pings_count: int = Field(default=0, description="Pings rejected due to coordinates or impossible speeds")
 
+    # Step 12 structured indicators & candidate classification
+    temporal_match: bool = Field(default=True, description="True if vessel temporal window overlaps release window")
+    spatial_match: bool = Field(default=True, description="True if vessel traversed within spatial corridor")
+    min_distance_km: float = Field(default=0.0, description="Minimum distance to source in km (CPA)")
+    entered_source_region: bool = Field(default=False, description="True if vessel entered the source polygon")
+    trajectory_quality: str = Field(default="Standard Quality", description="AIS trajectory quality rating")
+    ais_gap_detected: bool = Field(default=False, description="True if AIS transponder gap was detected")
+    candidate_status: str = Field(default="Candidate", description="Status: Candidate, Low compatibility, or Insufficient evidence")
+
     # Convenience aliases
     @property
     def closest_distance(self) -> float:

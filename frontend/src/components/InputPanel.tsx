@@ -38,6 +38,14 @@ export const InputPanel: React.FC<InputPanelProps> = ({
   const [confidenceThreshold, setConfidenceThreshold] = useState<number>(0.50);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  // AIS Trajectory Configuration (Phase 5)
+  const [selectedAisFile, setSelectedAisFile] = useState<File | null>(null);
+  const [aisFileName, setAisFileName] = useState<string | null>(null);
+  const [aisDatasetPath, setAisDatasetPath] = useState<string>(
+    'data/sample_ais/marine_cadastre_ais_fixture.csv'
+  );
+  const [spatialRadiusKm, setSpatialRadiusKm] = useState<number>(25.0);
+
   // Metocean demo overrides
   const [showOverrides, setShowOverrides] = useState(false);
   const [windSpeed, setWindSpeed] = useState(
@@ -98,6 +106,9 @@ export const InputPanel: React.FC<InputPanelProps> = ({
       windDirectionDeg: showOverrides ? windDir : undefined,
       currentSpeedMs: showOverrides ? currentSpeed : undefined,
       currentDirectionDeg: showOverrides ? currentDir : undefined,
+      aisFile: selectedAisFile,
+      aisDatasetPath: aisDatasetPath ? aisDatasetPath.trim() : undefined,
+      spatialRadiusKm,
     });
   };
 
@@ -283,6 +294,44 @@ export const InputPanel: React.FC<InputPanelProps> = ({
             </div>
           )}
         </div>
+
+        {/* AIS Trajectory Ingestion Section */}
+        {appMode === 'real' && (
+          <div className="form-group" style={{ marginTop: '0.8rem', marginBottom: '1.2rem' }}>
+            <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Historical AIS Dataset (CSV)</span>
+              <span className="badge badge-cyan font-mono" style={{ fontSize: '0.65rem' }}>
+                PHASE 5
+              </span>
+            </label>
+            <div className="form-row-2">
+              <input
+                type="text"
+                value={aisDatasetPath}
+                onChange={(e) => setAisDatasetPath(e.target.value)}
+                placeholder="data/sample_ais/marine_cadastre_ais_fixture.csv"
+                className="form-input font-mono"
+                style={{ fontSize: '0.78rem' }}
+                title="Historical AIS trajectory CSV file path on server"
+              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="text-muted font-mono" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>Corridor:</span>
+                <input
+                  type="number"
+                  min="5"
+                  max="150"
+                  step="5"
+                  value={spatialRadiusKm}
+                  onChange={(e) => setSpatialRadiusKm(parseFloat(e.target.value) || 25)}
+                  className="form-input font-mono"
+                  style={{ width: '80px', fontSize: '0.8rem' }}
+                  title="Search corridor radius in km"
+                />
+                <span className="text-muted font-mono" style={{ fontSize: '0.75rem' }}>km</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Analyze Action Button */}
         <button

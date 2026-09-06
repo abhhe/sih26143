@@ -9,6 +9,8 @@ import {
   DriftUncertainty,
   ReleaseTimeWindow,
   ParticleTrajectory,
+  CandidateVesselFeatures,
+  AISCandidateRequest,
 } from '../types/contracts';
 
 export interface HealthResponse {
@@ -316,6 +318,45 @@ export const apiClient = {
       }
       if (err instanceof ApiError) throw err;
       throw new ApiError(`Error connecting to source reconstruction API: ${(err as Error).message}`, 0);
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
+  /**
+   * Analyze AIS vessel trajectories and extract candidate kinematic features (/api/ais/analyze-candidates).
+   * Spatially and temporally filters historical tracks against Phase 4 probable source region.
+   */
+  async analyzeAisCandidates(
+    request: AISCandidateRequest,
+    timeoutMs = 25000
+  ): Promise<CandidateVesselFeatures[]> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/ais/analyze-candidates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new ApiError(
+          errData.detail || `AIS candidate analysis failed (HTTP ${res.status})`,
+          res.status
+        );
+      }
+
+      return (await res.json()) as CandidateVesselFeatures[];
+    } catch (err: unknown) {
+      if ((err as Error).name === 'AbortError') {
+        throw new ApiError(`AIS candidate analysis timed out after ${timeoutMs}ms`, 408);
+      }
+      if (err instanceof ApiError) throw err;
+      throw new ApiError(`Error connecting to AIS candidate API: ${(err as Error).message}`, 0);
     } finally {
       clearTimeout(timer);
     }

@@ -18,7 +18,14 @@ from backend.app.domain.models import (
     AISGap,
     CandidateVesselFeatures,
 )
+from backend.app.core.config import settings
 from backend.app.adapters.ais.ais_adapter import AISAdapter
+from backend.app.adapters.ais.ais_provider import (
+    AISProvider,
+    CSVAISProvider,
+    RawPingsAISProvider,
+    GlobalFishingWatchAISProvider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -346,13 +353,15 @@ class AISVesselAnalyzer:
         source_centroid: CoordinatePoint,
         release_window: ReleaseTimeWindow,
         spatial_radius_km: float,
+        temporal_buffer_hours: Optional[float] = None,
     ) -> List[AISTrajectory]:
         """
         Filter trajectories down to candidates that navigated within
         spatial_radius_km of the source centroid and overlap the release time window.
         """
-        earliest_limit = self.normalize_timestamp(release_window.earliest) - timedelta(hours=self.temporal_buffer_hours)
-        latest_limit = self.normalize_timestamp(release_window.latest) + timedelta(hours=self.temporal_buffer_hours)
+        buf_h = temporal_buffer_hours if temporal_buffer_hours is not None else self.temporal_buffer_hours
+        earliest_limit = self.normalize_timestamp(release_window.earliest) - timedelta(hours=buf_h)
+        latest_limit = self.normalize_timestamp(release_window.latest) + timedelta(hours=buf_h)
 
         candidates: List[AISTrajectory] = []
         for traj in trajectories:
@@ -744,8 +753,10 @@ class AISVesselAnalyzer:
         probable_source_region: Union[SpillGeometry, Dict[str, Any], List[List[float]]],
         release_time_window: ReleaseTimeWindow,
         spatial_radius_km: float = 25.0,
-        ais_dataset: Union[Path, str, List[AISTrajectory], List[Dict[str, Any]]] = None,
+        ais_dataset: Union[AISProvider, Path, str, List[AISTrajectory], List[Dict[str, Any]], None] = None,
         source_centroid: Optional[CoordinatePoint] = None,
+        temporal_tolerance_hours: Optional[float] = None,
+        app_mode: Optional[str] = None,
     ) -> List[CandidateVesselFeatures]:
         """
         Execute complete 10-step AIS trajectory analysis and kinematic feature extraction.
@@ -754,8 +765,10 @@ class AISVesselAnalyzer:
           - probable_source_region: GeoJSON SpillGeometry or list of [lon, lat] ring coordinates
           - release_time_window: ReleaseTimeWindow bracket
           - spatial_radius_km: Configurable search distance threshold
-          - ais_dataset: Filepath (CSV), list of AISTrajectory, or list of raw ping dicts
+          - ais_dataset: AISProvider, Filepath (CSV), list of AISTrajectory, or list of raw ping dicts
           - source_centroid: Optional spatial center of mass
+          - temporal_tolerance_hours: Optional temporal tolerance buffer (hours)
+          - app_mode: Optional runtime mode ("DEMO" or "REAL")
         
         Returns:
           List[CandidateVesselFeatures] for all candidate vessels meeting spatial/temporal criteria.
@@ -785,29 +798,55 @@ class AISVesselAnalyzer:
             else:
                 raise ValueError("source_centroid or a valid probable_source_region polygon is required.")
 
-        # Load & Ingest raw data
+        mode = (app_mode or settings.app_mode).upper()
+
+        # Load & Ingest raw data via AISProvider abstraction
         raw_pings: List[Dict[str, Any]] = []
         pre_trajectories: Optional[List[AISTrajectory]] = None
 
-        if isinstance(ais_dataset, (str, Path)):
+        if isinstance(ais_dataset, AISProvider):
+            raw_pings = ais_dataset.get_historical_positions()
+        elif isinstance(ais_dataset, (str, Path)):
             p = Path(ais_dataset)
             if not p.exists():
                 raise FileNotFoundError(f"AIS dataset file not found: {p}")
-            pre_trajectories = self._adapter.load_from_csv(p)
+            provider = CSVAISProvider(p)
+            raw_pings = provider.get_historical_positions()
         elif isinstance(ais_dataset, list):
             if ais_dataset and isinstance(ais_dataset[0], AISTrajectory):
                 pre_trajectories = ais_dataset
             elif ais_dataset and isinstance(ais_dataset[0], AISPoint):
-                raw_pings = [pt.model_dump() for pt in ais_dataset]
+                provider = RawPingsAISProvider(ais_dataset)
+                raw_pings = provider.get_historical_positions()
             elif ais_dataset and isinstance(ais_dataset[0], dict):
-                raw_pings = ais_dataset
+                provider = RawPingsAISProvider(ais_dataset)
+                raw_pings = provider.get_historical_positions()
         elif ais_dataset is None:
-            # Fallback to demo fixture
-            fixture_path = Path(__file__).resolve().parent.parent.parent.parent / "tests" / "fixtures" / "marine_cadastre_ais_fixture.csv"
-            if fixture_path.exists():
-                pre_trajectories = self._adapter.load_from_csv(fixture_path)
+            if mode == "REAL":
+                if settings.gfw_api_token:
+                    provider = GlobalFishingWatchAISProvider()
+                    raw_pings = provider.get_historical_positions()
+                else:
+                    raise ValueError(
+                        "REAL mode requires an AIS dataset or valid GFW_API_TOKEN. "
+                        "Please provide an ais_dataset CSV filepath, raw pings, or set APP_MODE=DEMO."
+                    )
             else:
-                raise ValueError("No AIS dataset provided and default fixture not found.")
+                # DEMO mode default fixture
+                fixture_candidates = [
+                    settings.ais_data_dir / "marine_cadastre_ais_fixture.csv",
+                    Path(__file__).resolve().parents[4] / "tests" / "fixtures" / "marine_cadastre_ais_fixture.csv",
+                    Path(__file__).resolve().parents[4] / "data" / "sample_ais" / "marine_cadastre_ais_fixture.csv",
+                ]
+                found = False
+                for fpath in fixture_candidates:
+                    if fpath.exists():
+                        provider = CSVAISProvider(fpath)
+                        raw_pings = provider.get_historical_positions()
+                        found = True
+                        break
+                if not found:
+                    raise ValueError("No AIS dataset provided and default fixture not found.")
 
         # If pre_trajectories exists, extract raw pings to run standard sanitization
         if pre_trajectories is not None:
@@ -818,6 +857,10 @@ class AISVesselAnalyzer:
         # Step 1, 2, 3: Normalize timestamps, reject invalid coords & impossible speeds
         sanitized_pings, total_raw_count, total_rejected_count = self.sanitize_pings(raw_pings)
 
+        if not sanitized_pings:
+            logger.warning("No valid AIS pings survived sanitization.")
+            return []
+
         # Step 4: Reconstruct vessel trajectories
         trajectories = self.reconstruct_trajectories(sanitized_pings)
 
@@ -827,6 +870,7 @@ class AISVesselAnalyzer:
             source_centroid=source_centroid,
             release_window=release_time_window,
             spatial_radius_km=spatial_radius_km,
+            temporal_buffer_hours=temporal_tolerance_hours,
         )
 
         logger.info(
@@ -862,6 +906,23 @@ class AISVesselAnalyzer:
 
             cand_raw_count = len([p for p in raw_pings if str(p.get("mmsi") or p.get("MMSI")) == cand.mmsi])
             cand_sanitized_count = len(cand.points)
+            cand_rejected_count = max(0, cand_raw_count - cand_sanitized_count)
+
+            # Trajectory quality assessment
+            if cand_rejected_count > 0:
+                traj_quality = f"Trajectory quality issue: {cand_rejected_count} invalid ping(s) filtered"
+            elif ais_gap.detected:
+                traj_quality = "AIS data gap detected"
+            else:
+                traj_quality = "Standard Quality"
+
+            # Spatio-temporal compatibility status
+            if passed_polygon or min_dist <= 5.0:
+                cand_status = "Candidate"
+            elif min_dist <= spatial_radius_km:
+                cand_status = "Low compatibility"
+            else:
+                cand_status = "Insufficient evidence"
 
             features = CandidateVesselFeatures(
                 mmsi=cand.mmsi,
@@ -872,8 +933,10 @@ class AISVesselAnalyzer:
                 trajectory=cand,
                 closest_point_to_source=closest_coord,
                 closest_distance_km=round(min_dist, 2),
+                min_distance_km=round(min_dist, 2),
                 time_of_closest_approach=cpa_time,
                 passed_through_source_region=passed_polygon,
+                entered_source_region=passed_polygon,
                 time_spent_near_source_minutes=dwell_mins,
                 entry_time=entry_t,
                 exit_time=exit_t,
@@ -883,9 +946,14 @@ class AISVesselAnalyzer:
                 departure_direction_deg=departure_deg,
                 route_deviation=route_dev,
                 ais_gap=ais_gap,
+                ais_gap_detected=ais_gap.detected,
+                temporal_match=True,
+                spatial_match=(min_dist <= spatial_radius_km),
+                trajectory_quality=traj_quality,
+                candidate_status=cand_status,
                 raw_pings_count=cand_raw_count,
                 sanitized_pings_count=cand_sanitized_count,
-                rejected_pings_count=max(0, cand_raw_count - cand_sanitized_count),
+                rejected_pings_count=cand_rejected_count,
             )
             results.append(features)
 

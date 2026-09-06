@@ -12,7 +12,7 @@ import { JudgeDemoModal } from './components/JudgeDemoModal';
 import { investigationService } from './services/investigationAdapter';
 import { apiClient } from './services/apiClient';
 import { ScenarioPreset, InvestigationInput } from './services/adapterInterface';
-import { InvestigationSummary, VesselEvidence, DriftResult, EnvironmentalState } from './types/contracts';
+import { InvestigationSummary, VesselEvidence, DriftResult, EnvironmentalState, CandidateVesselFeatures } from './types/contracts';
 
 export const App: React.FC = () => {
   const [scenarios, setScenarios] = useState<ScenarioPreset[]>([]);
@@ -223,6 +223,75 @@ export const App: React.FC = () => {
           }
         }
 
+        // Phase 5: AIS Candidate Vessel Filtering
+        let candidateVessels: VesselEvidence[] = [];
+        let insufficientReason: string | null = detection.detected
+          ? null
+          : 'No oil spill detected in the uploaded SAR scene above the confidence threshold.';
+
+        if (detection.detected && driftResult && driftResult.release_time_window) {
+          try {
+            const rawCandidates: CandidateVesselFeatures[] = await apiClient.analyzeAisCandidates({
+              probable_source_region: driftResult.source_region,
+              source_centroid: driftResult.source_centroid,
+              release_time_window: driftResult.release_time_window,
+              spatial_radius_km: input.spatialRadiusKm || 25.0,
+              ais_dataset_path: input.aisDatasetPath || undefined,
+              app_mode: 'REAL',
+            });
+
+            if (rawCandidates && rawCandidates.length > 0) {
+              candidateVessels = rawCandidates.map((cand, idx) => {
+                const cpaDist = cand.closest_distance_km;
+                const passed = cand.passed_through_source_region;
+                const hasGap = cand.ais_gap?.detected || cand.ais_gap_detected;
+
+                return {
+                  mmsi: cand.mmsi,
+                  vessel_name: cand.vessel_name || `Vessel ${cand.mmsi}`,
+                  vessel_type: cand.vessel_type || 'Cargo/Tanker',
+                  rank: idx + 1,
+                  trajectory: cand.trajectory,
+                  spatial_score: Math.max(0, 100 - cpaDist * 3),
+                  temporal_score: cand.temporal_match ? 95 : 40,
+                  trajectory_score: passed ? 90 : Math.max(0, 80 - cpaDist * 2),
+                  drift_score: passed ? 85 : 50,
+                  behavioral_score: cand.route_deviation?.detected ? 80 : 50,
+                  overall_evidence_score: Math.max(0, 100 - cpaDist * 3.5),
+                  classification: (passed || cpaDist <= 5.0 ? 'Strong Candidate' : 'Low Consistency') as any,
+                  explanation: [
+                    `CPA distance: ${cpaDist.toFixed(2)} km from source centroid`,
+                    passed
+                      ? 'Vessel trajectory entered the 95% KDE probable source region'
+                      : `Vessel navigated within ${cpaDist.toFixed(1)} km of source region`,
+                    cand.route_deviation?.detected
+                      ? `Maneuver observed: ${cand.route_deviation.description || 'Route alteration near encounter'}`
+                      : 'Consistent transit speed maintained',
+                    hasGap
+                      ? `AIS data gap detected: ${cand.ais_gap?.gap_duration_minutes?.toFixed(0) || '>60'} min silence`
+                      : 'Continuous AIS transponder transmission',
+                  ],
+                  closest_approach: {
+                    distance_km: cpaDist,
+                    timestamp: cand.time_of_closest_approach,
+                    vessel_latitude: cand.closest_point_to_source.latitude,
+                    vessel_longitude: cand.closest_point_to_source.longitude,
+                    source_latitude: driftResult.source_centroid.latitude,
+                    source_longitude: driftResult.source_centroid.longitude,
+                  },
+                  ais_coverage_quality: hasGap ? 'minor_gaps' : 'continuous',
+                  candidate_features: cand,
+                };
+              });
+            } else {
+              insufficientReason = 'No AIS candidate vessels found within the spatial corridor and release window.';
+            }
+          } catch (aisErr) {
+            console.warn('AIS candidate analysis notice:', aisErr);
+            insufficientReason = `AIS candidate analysis: ${(aisErr as Error).message || 'No candidate vessels evaluated.'}`;
+          }
+        }
+
         const realSummary: InvestigationSummary = {
           investigation_id: `REAL-${Date.now().toString(36).toUpperCase()}`,
           status: 'completed',
@@ -239,15 +308,13 @@ export const App: React.FC = () => {
           spill_detection: detection,
           environmental_snapshot: envSnapshot,
           drift_result: driftResult,
-          candidate_vessels: [],
-          top_candidate: null,
-          insufficient_evidence_reason: detection.detected
-            ? null
-            : 'No oil spill detected in the uploaded SAR scene above the confidence threshold.',
+          candidate_vessels: candidateVessels,
+          top_candidate: candidateVessels.length > 0 ? candidateVessels[0] : null,
+          insufficient_evidence_reason: insufficientReason,
         };
 
         setInvestigation(realSummary);
-        setSelectedVesselMmsi(null);
+        setSelectedVesselMmsi(candidateVessels.length > 0 ? candidateVessels[0].mmsi : null);
       } catch (err: unknown) {
         const msg = (err as Error).message || 'SAR analysis request failed.';
         setErrorMessage(msg);

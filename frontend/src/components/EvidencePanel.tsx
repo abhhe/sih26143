@@ -20,20 +20,26 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({ vessel }) => {
     .toUTCString()
     .replace('GMT', 'UTC');
 
+  const isPhase5 = !!vessel.candidate_features;
+
   // Classification styling
   let badgeClass = 'badge-insufficient';
-  if (vessel.classification === 'High Evidence') badgeClass = 'badge-high';
-  else if (vessel.classification === 'Medium Evidence') badgeClass = 'badge-medium';
-  else if (vessel.classification === 'Low Evidence') badgeClass = 'badge-low';
+  if (vessel.classification === 'High Evidence' || vessel.classification === 'Strong Candidate') badgeClass = 'badge-high';
+  else if (vessel.classification === 'Medium Evidence' || vessel.classification === 'Moderate Candidate') badgeClass = 'badge-medium';
+  else if (vessel.classification === 'Low Evidence' || vessel.classification === 'Low Consistency') badgeClass = 'badge-low';
 
   return (
     <div className="card evidence-panel">
       <div className="card-header">
         <div className="card-title-group">
           <ShieldCheck size={16} className="text-cyan" />
-          <h3 className="card-title">Forensic Attribution Evidence Dossier</h3>
+          <h3 className="card-title">
+            {isPhase5 ? 'Candidate Vessel Kinematic Evidence (Phase 5)' : 'Forensic Attribution Evidence Dossier'}
+          </h3>
         </div>
-        <span className={`badge ${badgeClass}`}>{vessel.classification}</span>
+        <span className={`badge ${badgeClass}`}>
+          {isPhase5 ? 'Candidate Vessel' : vessel.classification}
+        </span>
       </div>
 
       <div className="card-body">
@@ -47,12 +53,24 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({ vessel }) => {
           </div>
 
           <div className="hero-score-box">
-            <span className="hero-score-label">Attribution Evidence Score</span>
+            <span className="hero-score-label">
+              {isPhase5 ? 'Kinematic Compatibility' : 'Attribution Evidence Score'}
+            </span>
             <div className="hero-score-val font-mono">
-              <span>{vessel.overall_evidence_score.toFixed(1)}</span>
-              <span className="hero-score-scale">/100</span>
+              {isPhase5 ? (
+                <span style={{ fontSize: '1.2rem', color: '#00e5ff' }}>
+                  {vessel.candidate_features?.entered_source_region ? 'SOURCE INTERSECT' : 'CORRIDOR MATCH'}
+                </span>
+              ) : (
+                <>
+                  <span>{vessel.overall_evidence_score.toFixed(1)}</span>
+                  <span className="hero-score-scale">/100</span>
+                </>
+              )}
             </div>
-            <span className="hero-score-subtext">Calibrated multi-criteria index</span>
+            <span className="hero-score-subtext">
+              {isPhase5 ? 'Spatial & Temporal Correlation' : 'Calibrated multi-criteria index'}
+            </span>
           </div>
         </div>
 
@@ -179,8 +197,10 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({ vessel }) => {
 
         {/* Scientific Principle Reminder */}
         <div className="scientific-disclaimer">
-          <strong>Scientific Principle:</strong> This metric represents an{' '}
-          <em>Attribution Evidence Score</em> derived from physical drift hindcasting and AIS kinematic correlation. It is not an uncalibrated statistical probability of culpability.
+          <strong>Scientific Principle:</strong>{' '}
+          {isPhase5
+            ? 'Vessel is evaluated strictly as a candidate based on spatial and temporal compatibility with the probable source region. Final attribution scoring and culpability analysis will be evaluated in Phase 6.'
+            : 'This metric represents an Attribution Evidence Score derived from physical drift hindcasting and AIS kinematic correlation. It is not an uncalibrated statistical probability of culpability.'}
         </div>
       </div>
     </div>

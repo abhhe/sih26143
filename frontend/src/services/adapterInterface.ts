@@ -16,6 +16,10 @@ export interface InvestigationInput {
   currentSpeedMs?: number;
   currentDirectionDeg?: number;
   evidenceThreshold?: number;
+  // Optional AIS Dataset configuration
+  aisDatasetPath?: string;
+  aisFile?: File | null;
+  spatialRadiusKm?: number;
 }
 
 export interface ScenarioPreset {

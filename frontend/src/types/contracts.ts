@@ -115,6 +115,83 @@ export interface AISTrajectory {
   data_gaps_count: number;
 }
 
+export interface SpeedStatistics {
+  mean_speed_knots: number;
+  min_speed_knots: number;
+  max_speed_knots: number;
+  std_speed_knots: number;
+  speed_at_cpa_knots: number;
+  speed_drop_knots: number;
+  speed_drop_percent: number;
+}
+
+export interface CourseStatistics {
+  mean_course_deg: number;
+  std_course_deg: number;
+  min_course_deg: number;
+  max_course_deg: number;
+  max_course_change_deg: number;
+}
+
+export interface RouteDeviation {
+  detected: boolean;
+  deviation_type?: 'NONE' | 'SHARP_COURSE_CHANGE' | 'SPEED_DECELERATION' | 'LOITERING' | 'MANEUVERING';
+  description?: string;
+  heading_change_deg: number;
+  speed_reduction_ratio: number;
+}
+
+export interface AISGap {
+  detected: boolean;
+  gap_duration_minutes: number;
+  gap_start_time?: string | null;
+  gap_end_time?: string | null;
+  description?: string | null;
+}
+
+export interface CandidateVesselFeatures {
+  mmsi: string;
+  vessel_name?: string;
+  vessel_type?: string;
+  imo?: string | null;
+  callsign?: string | null;
+  trajectory: AISTrajectory;
+  closest_point_to_source: CoordinatePoint;
+  closest_distance_km: number;
+  min_distance_km?: number;
+  time_of_closest_approach: string;
+  passed_through_source_region: boolean;
+  entered_source_region?: boolean;
+  time_spent_near_source_minutes: number;
+  entry_time?: string | null;
+  exit_time?: string | null;
+  speed_statistics: SpeedStatistics;
+  course_statistics: CourseStatistics;
+  approach_direction_deg: number;
+  departure_direction_deg: number;
+  route_deviation: RouteDeviation;
+  ais_gap: AISGap;
+  ais_gap_detected?: boolean;
+  temporal_match?: boolean;
+  spatial_match?: boolean;
+  trajectory_quality?: string;
+  candidate_status?: string;
+  raw_pings_count?: number;
+  sanitized_pings_count?: number;
+  rejected_pings_count?: number;
+}
+
+export interface AISCandidateRequest {
+  probable_source_region?: SpillGeometry | null;
+  source_centroid?: CoordinatePoint | null;
+  release_time_window: ReleaseTimeWindow;
+  spatial_radius_km?: number;
+  ais_dataset_path?: string | null;
+  raw_pings?: Record<string, any>[] | null;
+  temporal_tolerance_hours?: number;
+  app_mode?: string | null;
+}
+
 // ----------------------------------------------------------------------
 // 5. Drift Result
 // ----------------------------------------------------------------------
@@ -209,6 +286,7 @@ export interface VesselEvidence {
   closest_approach: ClosestPointOfApproach;
   ais_coverage_quality: 'continuous' | 'minor_gaps' | 'dark_period_suspected';
   scoring_weights_used?: Record<string, number>;
+  candidate_features?: CandidateVesselFeatures;
 }
 
 export interface SensitivityPerturbation {
