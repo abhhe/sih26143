@@ -10,6 +10,9 @@ interface HeaderProps {
   activeStepIndex?: number;
   onOpenJudgeDemo: () => void;
   onOpenValidation: () => void;
+  appMode: 'demo' | 'real';
+  onToggleMode: (mode: 'demo' | 'real') => void;
+  backendOnline: boolean | null;
 }
 
 const WORKFLOW_STEPS = [
@@ -29,6 +32,9 @@ export const Header: React.FC<HeaderProps> = ({
   activeStepIndex = 5,
   onOpenJudgeDemo,
   onOpenValidation,
+  appMode,
+  onToggleMode,
+  backendOnline,
 }) => {
   return (
     <header className="app-header">
@@ -73,30 +79,88 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
 
+          {/* Backend Health Status Badge */}
+          <div
+            className="header-meta-pill"
+            title={backendOnline ? 'FastAPI backend is online' : 'FastAPI backend is offline'}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+          >
+            <span
+              style={{
+                display: 'inline-block',
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                backgroundColor: backendOnline === true ? '#00f59b' : backendOnline === false ? '#ef4444' : '#f59e0b',
+                boxShadow: backendOnline === true ? '0 0 6px #00f59b' : 'none',
+              }}
+            ></span>
+            <span className="pill-value font-mono" style={{ fontSize: '0.75rem' }}>
+              {backendOnline === true ? 'FastAPI: Online' : backendOnline === false ? 'FastAPI: Offline' : 'Checking...'}
+            </span>
+          </div>
+
           {/* Investigation ID */}
           <div className="header-meta-pill">
             <span className="pill-label">INVESTIGATION ID</span>
             <span className="pill-value font-mono">{investigationId}</span>
           </div>
 
-          {/* Demo Mode & Scenario Selector */}
-          <div className="header-scenario-selector">
-            <div className="demo-indicator">
-              <span className="demo-pulse-dot"></span>
-              <span className="demo-label">DEMO MODE ACTIVE</span>
+          {/* Mode Switcher: DEMO MODE vs REAL DATA MODE */}
+          <div className="header-scenario-selector" style={{ gap: '0.5rem' }}>
+            <div style={{ display: 'inline-flex', borderRadius: 4, background: '#0f172a', padding: 2, border: '1px solid #334155' }}>
+              <button
+                type="button"
+                onClick={() => onToggleMode('demo')}
+                style={{
+                  padding: '4px 10px',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  borderRadius: 3,
+                  border: 'none',
+                  cursor: 'pointer',
+                  background: appMode === 'demo' ? '#1e293b' : 'transparent',
+                  color: appMode === 'demo' ? '#00e5ff' : '#94a3b8',
+                }}
+              >
+                DEMO MODE
+              </button>
+              <button
+                type="button"
+                onClick={() => onToggleMode('real')}
+                style={{
+                  padding: '4px 10px',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  borderRadius: 3,
+                  border: 'none',
+                  cursor: 'pointer',
+                  background: appMode === 'real' ? '#1e293b' : 'transparent',
+                  color: appMode === 'real' ? '#00e5ff' : '#94a3b8',
+                }}
+              >
+                REAL DATA MODE
+              </button>
             </div>
-            <select
-              className="scenario-select"
-              value={activeScenarioId}
-              onChange={(e) => onSelectScenario(e.target.value)}
-              title="Select demo scenario"
-            >
-              {scenarios.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({s.expectedOutcome})
-                </option>
-              ))}
-            </select>
+
+            {appMode === 'demo' ? (
+              <select
+                className="scenario-select"
+                value={activeScenarioId}
+                onChange={(e) => onSelectScenario(e.target.value)}
+                title="Select demo scenario"
+              >
+                {scenarios.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.expectedOutcome})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="badge badge-cyan font-mono" style={{ fontSize: '0.72rem' }}>
+                FastAPI Live SAR
+              </span>
+            )}
           </div>
         </div>
       </div>

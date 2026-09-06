@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, ShieldCheck, RefreshCw, AlertTriangle, CheckCircle2, TrendingUp, Info } from 'lucide-react';
 import { ValidationMetrics, SensitivityPerturbation } from '../types/contracts';
-import { API_BASE_URL } from '../config/api';
+import { apiClient } from '../services/apiClient';
 
 interface ValidationModalProps {
   isOpen: boolean;
@@ -101,12 +101,9 @@ export const ValidationModal: React.FC<ValidationModalProps> = ({ isOpen, onClos
     if (!isOpen) return;
     async function fetchMetrics() {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/validation/metrics`);
-        if (res.ok) {
-          const data = await res.json();
-          setMetrics(data);
-          setStatusMessage('Live benchmark suite loaded from backend API.');
-        }
+        const data = await apiClient.getValidationMetrics();
+        setMetrics(data);
+        setStatusMessage('Live benchmark suite loaded from backend API.');
       } catch {
         // Fallback to DEFAULT_METRICS
         setMetrics(DEFAULT_METRICS);
@@ -120,21 +117,13 @@ export const ValidationModal: React.FC<ValidationModalProps> = ({ isOpen, onClos
     setIsRunning(true);
     setStatusMessage('Executing Monte Carlo validation suite (25 simulations)...');
     try {
-      const res = await fetch(`${API_BASE_URL}/api/validation/run`, {
-        method: 'POST',
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setMetrics(data);
-        setStatusMessage('Monte Carlo benchmark completed successfully.');
-      } else {
-        // Simulate delay for offline benchmark demonstration
-        await new Promise((r) => setTimeout(r, 1200));
-        setStatusMessage('Monte Carlo synthetic validation completed (local engine).');
-      }
+      const data = await apiClient.runValidationBenchmark(25);
+      setMetrics(data);
+      setStatusMessage('Monte Carlo benchmark completed successfully.');
     } catch {
-      await new Promise((r) => setTimeout(r, 1000));
-      setStatusMessage('Monte Carlo synthetic validation completed (standalone mode).');
+      // Simulate delay for offline benchmark demonstration
+      await new Promise((r) => setTimeout(r, 1200));
+      setStatusMessage('Monte Carlo synthetic validation completed (local engine).');
     } finally {
       setIsRunning(false);
     }

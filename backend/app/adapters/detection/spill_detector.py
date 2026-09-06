@@ -345,14 +345,18 @@ class SARSpillDetector:
 
     def _load_image_array(self, image_path: Path) -> np.ndarray:
         """Load image file or generate synthetic calibrated SAR patch."""
-        if image_path.exists() and image_path.suffix.lower() in (".png", ".jpg", ".jpeg", ".tif", ".tiff"):
-            try:
-                pil_img = Image.open(image_path).convert("L")
-                return np.array(pil_img, dtype=np.float32)
-            except Exception as e:
-                logger.warning(f"Could not load image file {image_path}: {e}. Using synthetic calibrated patch.")
+        if image_path.exists():
+            if image_path.suffix.lower() in (".png", ".jpg", ".jpeg", ".tif", ".tiff"):
+                try:
+                    pil_img = Image.open(image_path).convert("L")
+                    return np.array(pil_img, dtype=np.float32)
+                except Exception as e:
+                    logger.error(f"Could not load image file {image_path}: {e}")
+                    raise ValueError(f"Failed to decode SAR image {image_path.name}: {e}")
+            else:
+                raise ValueError(f"Unsupported image format: {image_path.suffix}")
 
-        # Synthetic SAR patch with simulated oil slick and speckle noise
+        # Synthetic SAR patch with simulated oil slick and speckle noise (for demo/fixture fallback)
         return self._generate_synthetic_sar_patch()
 
     def _generate_synthetic_sar_patch(

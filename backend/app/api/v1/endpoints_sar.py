@@ -1,9 +1,11 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body
 from pydantic import BaseModel
+
+from PIL import Image
 
 from backend.app.core.config import settings
 from backend.app.domain.models import (
@@ -18,6 +20,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Satellite SAR Analysis"])
 detector = SARSpillDetector()
 sar_adapter = Sentinel1Adapter()
+
+SUPPORTED_EXTENSIONS = {".tiff", ".tif", ".png", ".jpg", ".jpeg"}
 
 
 class AnalyzeRequestJSON(BaseModel):
@@ -46,25 +50,53 @@ async def analyze_sar_scene(
 ) -> SpillDetection:
     """
     Endpoint accepting either:
-      1. Multipart form-data with uploaded SAR raster file (.tiff, .png, .jpg)
+      1. Multipart form-data with uploaded SAR raster file (.tiff, .png, .jpg, .jpeg)
       2. Metadata referencing an existing granule image_id or local path
     """
-    target_path = Path("data/sample_sar/uploaded_scene.tiff")
-
     if file is not None:
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="Uploaded file missing filename.")
+
+        ext = Path(file.filename).suffix.lower()
+        if ext not in SUPPORTED_EXTENSIONS:
+            supported_str = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file format '{ext}'. Supported SAR formats are: {supported_str}",
+            )
+
         # Save uploaded file temporarily to data/sample_sar
         settings.ensure_directories()
         target_path = settings.sar_data_dir / file.filename
         try:
             content = await file.read()
+            if len(content) == 0:
+                raise HTTPException(status_code=400, detail="Uploaded file is empty (0 bytes).")
             with open(target_path, "wb") as f:
                 f.write(content)
+        except HTTPException:
+            raise
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to process uploaded file: {e}")
+            raise HTTPException(status_code=400, detail=f"Failed to save uploaded file: {e}")
+
+        # Verify image format and integrity with PIL
+        try:
+            with Image.open(target_path) as img:
+                img.verify()
+        except Exception as e:
+            if target_path.exists():
+                try:
+                    target_path.unlink()
+                except OSError:
+                    pass
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid or corrupted image file: {e}",
+            )
 
         obs = SatelliteObservation(
             image_id=image_id or file.filename or "UPLOADED_SCENE",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             latitude=latitude if latitude is not None else 56.45,
             longitude=longitude if longitude is not None else 3.20,
             image_path=str(target_path),
@@ -84,5 +116,11 @@ async def analyze_sar_scene(
         obs = await sar_adapter.get_observation_by_id("S1A_IW_GRDH_1SDV_20260814T061522_054321_066F12_B1A4")
 
     # Run detection pipeline
-    result = await detector.detect_spill(obs, confidence_threshold=confidence_threshold)
-    return result
+    try:
+        result = await detector.detect_spill(obs, confidence_threshold=confidence_threshold)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"SAR detection error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"SAR processing failure: {str(e)}")

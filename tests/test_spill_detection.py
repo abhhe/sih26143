@@ -108,6 +108,10 @@ def test_api_satellite_analyze_endpoint():
     assert res_health.status_code == 200
     assert res_health.json()["status"] == "online"
 
+    res_health_root = client.get("/health")
+    assert res_health_root.status_code == 200
+    assert res_health_root.json()["status"] == "online"
+
     # 2. Analyze route with form data
     res = client.post(
         "/api/satellite/analyze",
@@ -129,3 +133,189 @@ def test_api_satellite_analyze_endpoint():
     assert "look_alike_risk" in data
     assert data["detected"] is True
     assert data["area"] > 0
+
+
+def test_api_sar_file_upload_detected():
+    """Verify multipart file upload with an image containing an oil slick is detected."""
+    import io
+    from PIL import Image
+
+    client = TestClient(app)
+
+    # Create synthetic SAR raster with an elongated dark slick
+    detector = SARSpillDetector()
+    patch = detector._generate_synthetic_sar_patch(h=128, w=128, add_slick=True)
+    # Scale patch to 8-bit image
+    norm = ((patch - patch.min()) / (patch.max() - patch.min()) * 255.0).astype(np.uint8)
+    img = Image.fromarray(norm)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+
+    res = client.post(
+        "/api/satellite/analyze",
+        files={"file": ("real_sar_scene.png", buf.getvalue(), "image/png")},
+        data={
+            "latitude": "56.45",
+            "longitude": "3.20",
+            "resolution": "10.0",
+            "confidence_threshold": "0.50",
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["detected"] is True
+    assert data["confidence"] >= 0.50
+    assert data["area"] > 0
+    assert data["perimeter"] > 0
+    assert "centroid" in data
+    assert "bounding_box" in data
+    assert "spill_mask" in data
+    assert len(data["spill_mask"]["coordinates"]) > 0
+
+
+def test_api_sar_file_upload_no_spill_detected():
+    """Verify image with uniform ocean clutter produces detected=False."""
+    import io
+    from PIL import Image
+
+    client = TestClient(app)
+
+    # Uniform sea backscatter with no dark damping patch
+    detector = SARSpillDetector()
+    patch = detector._generate_synthetic_sar_patch(h=128, w=128, add_slick=False)
+    norm = ((patch - patch.min()) / (patch.max() - patch.min()) * 255.0).astype(np.uint8)
+    img = Image.fromarray(norm)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+
+    res = client.post(
+        "/api/satellite/analyze",
+        files={"file": ("clean_sea.png", buf.getvalue(), "image/png")},
+        data={
+            "latitude": "56.45",
+            "longitude": "3.20",
+            "resolution": "10.0",
+            "confidence_threshold": "0.80",
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["detected"] is False
+    assert data["area"] == 0.0
+    assert data["perimeter"] == 0.0
+    assert data["spill_mask"]["coordinates"] == []
+
+
+def test_api_sar_unsupported_file_format():
+    """Verify uploading an unsupported file format returns HTTP 400."""
+    client = TestClient(app)
+
+    res = client.post(
+        "/api/satellite/analyze",
+        files={"file": ("sar_granule.nc", b"CDF\x01\x00\x00", "application/x-netcdf")},
+        data={"latitude": "56.45", "longitude": "3.20"},
+    )
+    assert res.status_code == 400
+    assert "Unsupported file format" in res.json()["detail"]
+
+
+def test_api_sar_corrupted_file():
+    """Verify uploading corrupted image data returns HTTP 400."""
+    client = TestClient(app)
+
+    res = client.post(
+        "/api/satellite/analyze",
+        files={"file": ("corrupted_sar.png", b"\x89PNG\r\n\x1a\nCORRUPTED_BYTES_HERE", "image/png")},
+        data={"latitude": "56.45", "longitude": "3.20"},
+    )
+    assert res.status_code == 400
+    assert "Invalid or corrupted image file" in res.json()["detail"]
+
+
+def test_sar_response_contract_frontend_mapping():
+    """
+    Verify backend response maps 1-to-1 to the frontend SpillDetection contract
+    with all required types and geodetic fields.
+    """
+    import io
+    from PIL import Image
+
+    client = TestClient(app)
+
+    detector = SARSpillDetector()
+    patch = detector._generate_synthetic_sar_patch(h=128, w=128, add_slick=True)
+    norm = ((patch - patch.min()) / (patch.max() - patch.min()) * 255.0).astype(np.uint8)
+    img = Image.fromarray(norm)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+
+    res = client.post(
+        "/api/satellite/analyze",
+        files={"file": ("contract_test.png", buf.getvalue(), "image/png")},
+        data={
+            "latitude": "56.4500",
+            "longitude": "3.2000",
+            "resolution": "10.0",
+            "confidence_threshold": "0.50",
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+
+    # Verify frontend contract key parity
+    required_keys = [
+        "detected", "confidence", "centroid", "bounding_box",
+        "area", "perimeter", "orientation", "spill_mask",
+        "look_alike_risk", "detector_algorithm"
+    ]
+    for key in required_keys:
+        assert key in data, f"Missing required frontend contract key: {key}"
+
+    # Centroid contract
+    assert isinstance(data["centroid"]["latitude"], float)
+    assert isinstance(data["centroid"]["longitude"], float)
+
+    # Bounding box contract
+    bbox = data["bounding_box"]
+    for b_key in ["min_latitude", "min_longitude", "max_latitude", "max_longitude"]:
+        assert isinstance(bbox[b_key], float)
+    assert bbox["min_latitude"] <= bbox["max_latitude"]
+    assert bbox["min_longitude"] <= bbox["max_longitude"]
+
+    # Spill mask GeoJSON contract
+    mask = data["spill_mask"]
+    assert mask["type"] in ("Polygon", "MultiPolygon")
+    assert isinstance(mask["coordinates"], list)
+    if data["detected"]:
+        assert len(mask["coordinates"]) > 0
+        ring = mask["coordinates"][0]
+        assert len(ring) >= 4
+        # GeoJSON is [lon, lat]
+        for pt in ring:
+            assert len(pt) == 2
+            assert isinstance(pt[0], (int, float))
+            assert isinstance(pt[1], (int, float))
+
+
+def test_demo_mode_isolation_and_fallback():
+    """
+    Verify DEMO MODE preserves isolated execution without file upload
+    using calibrated demo observations.
+    """
+    client = TestClient(app)
+
+    # Without file, analyze returns deterministic observation
+    res = client.post(
+        "/api/satellite/analyze",
+        data={
+            "latitude": "56.45",
+            "longitude": "3.20",
+        },
+    )
+    assert res.status_code == 200
+    demo_data = res.json()
+    assert demo_data["detected"] is True
+    assert demo_data["confidence"] >= 0.70

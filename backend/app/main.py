@@ -13,10 +13,10 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Configure CORS for local React development
+# Configure CORS for local React development and configured domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,8 +29,7 @@ app.include_router(attribution_router)
 app.include_router(validation_router)
 
 
-
-
+@app.get("/health", tags=["System"])
 @app.get("/api/health", tags=["System"])
 def health_check():
     return {

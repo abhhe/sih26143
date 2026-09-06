@@ -12,6 +12,7 @@ interface InputPanelProps {
   initialCurrentV: number;
   onRunAnalysis: (input: InvestigationInput) => Promise<void>;
   isLoading: boolean;
+  appMode?: 'demo' | 'real';
 }
 
 export const InputPanel: React.FC<InputPanelProps> = ({
@@ -24,12 +25,18 @@ export const InputPanel: React.FC<InputPanelProps> = ({
   initialCurrentV,
   onRunAnalysis,
   isLoading,
+  appMode = 'demo',
 }) => {
   const [latitude, setLatitude] = useState(initialLatitude);
   const [longitude, setLongitude] = useState(initialLongitude);
   const [obsDate, setObsDate] = useState('2026-08-14');
   const [obsTime, setObsTime] = useState('06:15');
-  const [fileName, setFileName] = useState<string | null>('S1A_NORTH_SEA_20260814.tiff');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileName, setFileName] = useState<string | null>(
+    appMode === 'real' ? null : 'S1A_NORTH_SEA_20260814.tiff'
+  );
+  const [confidenceThreshold, setConfidenceThreshold] = useState<number>(0.50);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   // Metocean demo overrides
   const [showOverrides, setShowOverrides] = useState(false);
@@ -57,21 +64,36 @@ export const InputPanel: React.FC<InputPanelProps> = ({
     }
     setWindSpeed(Number(Math.sqrt(initialWindU ** 2 + initialWindV ** 2).toFixed(1)));
     setCurrentSpeed(Number(Math.sqrt(initialCurrentU ** 2 + initialCurrentV ** 2).toFixed(2)));
-  }, [initialLatitude, initialLongitude, initialTimestamp, initialWindU, initialWindV, initialCurrentU, initialCurrentV]);
+    if (appMode === 'demo') {
+      setSelectedFile(null);
+      setFileName('S1A_NORTH_SEA_20260814.tiff');
+    }
+    setUploadError(null);
+  }, [initialLatitude, initialLongitude, initialTimestamp, initialWindU, initialWindV, initialCurrentU, initialCurrentV, appMode]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setFileName(e.target.files[0].name);
+      const file = e.target.files[0];
+      setSelectedFile(file);
+      setFileName(file.name);
+      setUploadError(null);
     }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (appMode === 'real' && !selectedFile) {
+      setUploadError('Please select a valid SAR image (.tiff, .png, .jpg) to analyze in Real Data Mode.');
+      return;
+    }
+    setUploadError(null);
     onRunAnalysis({
+      imageFile: selectedFile,
       latitude,
       longitude,
       observationDate: obsDate,
       observationTime: obsTime,
+      confidenceThreshold,
       windSpeedMs: showOverrides ? windSpeed : undefined,
       windDirectionDeg: showOverrides ? windDir : undefined,
       currentSpeedMs: showOverrides ? currentSpeed : undefined,
@@ -86,29 +108,51 @@ export const InputPanel: React.FC<InputPanelProps> = ({
           <Crosshair size={16} className="text-cyan" />
           <span>Investigation Target Parameters</span>
         </h2>
-        <span className="panel-subtitle">Observation Ingestion</span>
+        <span className="panel-subtitle">
+          {appMode === 'real' ? 'Live SAR Ingestion (FastAPI)' : 'Observation Ingestion (Demo Mode)'}
+        </span>
       </div>
 
       <form onSubmit={handleSubmit} className="input-form">
         {/* File Upload Zone */}
         <div className="form-group">
-          <label className="form-label">Sentinel-1 / SAR Image Acquisition</label>
+          <label className="form-label">
+            Sentinel-1 / SAR Image Acquisition
+            {appMode === 'real' && (
+              <span className="badge badge-cyan font-mono" style={{ marginLeft: '0.5rem', fontSize: '0.65rem' }}>
+                REAL MODE
+              </span>
+            )}
+          </label>
           <div className="upload-dropzone">
             <input
               type="file"
               id="sar-upload"
-              accept=".tiff,.tif,.png,.jpg,.h5,.nc"
+              accept=".tiff,.tif,.png,.jpg,.jpeg"
               onChange={handleFileUpload}
               className="file-input-hidden"
             />
             <label htmlFor="sar-upload" className="dropzone-label">
               <Upload size={20} className="dropzone-icon" />
               <div className="dropzone-text">
-                <span className="dropzone-primary">{fileName ? fileName : 'Upload SAR Granule (.tiff, .png)'}</span>
-                <span className="dropzone-secondary">Copernicus CDSE / CSIRO SAR Benchmark</span>
+                <span className="dropzone-primary">
+                  {fileName
+                    ? fileName
+                    : appMode === 'real'
+                    ? 'Click to select SAR Scene (.tiff, .png, .jpg)'
+                    : 'Upload SAR Granule (.tiff, .png)'}
+                </span>
+                <span className="dropzone-secondary">
+                  Supported SAR formats: .tiff, .tif, .png, .jpg, .jpeg
+                </span>
               </div>
             </label>
           </div>
+          {uploadError && (
+            <div className="text-danger" style={{ fontSize: '0.8rem', marginTop: '0.4rem', color: '#ef4444' }}>
+              {uploadError}
+            </div>
+          )}
         </div>
 
         {/* Lat / Lon */}
@@ -249,12 +293,12 @@ export const InputPanel: React.FC<InputPanelProps> = ({
           {isLoading ? (
             <>
               <RefreshCw size={16} className="spin-icon" />
-              <span>Computing Hindcast & AIS Correlation...</span>
+              <span>{appMode === 'real' ? 'Analyzing SAR image...' : 'Computing Hindcast & AIS Correlation...'}</span>
             </>
           ) : (
             <>
               <Play size={16} fill="currentColor" />
-              <span>Execute Attribution Pipeline</span>
+              <span>{appMode === 'real' ? 'Analyze Uploaded SAR Image' : 'Execute Attribution Pipeline'}</span>
             </>
           )}
         </button>

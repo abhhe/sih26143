@@ -9,6 +9,7 @@ export interface InvestigationInput {
   longitude: number;
   observationDate: string;
   observationTime: string;
+  confidenceThreshold?: number;
   // Optional Metocean manual overrides for demo mode
   windSpeedMs?: number;
   windDirectionDeg?: number;

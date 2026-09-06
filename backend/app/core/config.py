@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, List
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -27,6 +27,18 @@ class Settings(BaseModel):
     # Execution Mode: "DEMO" uses local sample files; "REAL" queries configured external APIs
     app_mode: Literal["DEMO", "REAL"] = Field(
         default_factory=lambda: os.getenv("APP_MODE", "DEMO").upper()  # type: ignore
+    )
+
+    # Allowed CORS origins
+    cors_origins: List[str] = Field(
+        default_factory=lambda: [
+            origin.strip()
+            for origin in os.getenv(
+                "CORS_ORIGINS",
+                "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000"
+            ).split(",")
+            if origin.strip()
+        ]
     )
 
     # Local storage paths

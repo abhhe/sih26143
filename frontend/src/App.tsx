@@ -10,6 +10,7 @@ import { InsufficientEvidenceBanner } from './components/InsufficientEvidenceBan
 import { ValidationModal } from './components/ValidationModal';
 import { JudgeDemoModal } from './components/JudgeDemoModal';
 import { investigationService } from './services/investigationAdapter';
+import { apiClient } from './services/apiClient';
 import { ScenarioPreset, InvestigationInput } from './services/adapterInterface';
 import { InvestigationSummary, VesselEvidence } from './types/contracts';
 
@@ -19,10 +20,33 @@ export const App: React.FC = () => {
   const [investigation, setInvestigation] = useState<InvestigationSummary | null>(null);
   const [selectedVesselMmsi, setSelectedVesselMmsi] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [appMode, setAppMode] = useState<'demo' | 'real'>('demo');
+  const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Modals state
   const [isValidationModalOpen, setIsValidationModalOpen] = useState<boolean>(false);
   const [isJudgeDemoModalOpen, setIsJudgeDemoModalOpen] = useState<boolean>(false);
+
+  // Periodic health check to monitor FastAPI backend connectivity
+  useEffect(() => {
+    let isMounted = true;
+    async function checkHealth() {
+      try {
+        await apiClient.checkHealth(3000);
+        if (isMounted) setBackendOnline(true);
+      } catch {
+        if (isMounted) setBackendOnline(false);
+      }
+    }
+
+    checkHealth();
+    const interval = setInterval(checkHealth, 15000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   // Load preset scenarios on mount
   useEffect(() => {
@@ -40,10 +64,24 @@ export const App: React.FC = () => {
     init();
   }, []);
 
-  // Handle scenario switch
+  // Handle mode toggle (DEMO MODE vs REAL DATA MODE)
+  const handleToggleMode = async (newMode: 'demo' | 'real') => {
+    setAppMode(newMode);
+    setErrorMessage(null);
+    if (newMode === 'demo') {
+      const scenario = await investigationService.getScenarioById(activeScenarioId);
+      if (scenario) {
+        setInvestigation(scenario.data);
+        setSelectedVesselMmsi(scenario.data.candidate_vessels[0]?.mmsi || null);
+      }
+    }
+  };
+
+  // Handle scenario switch (in Demo Mode)
   const handleSelectScenario = async (id: string) => {
     setActiveScenarioId(id);
     setIsLoading(true);
+    setErrorMessage(null);
     try {
       const summary = await investigationService.runInvestigation({
         scenarioId: id,
@@ -66,17 +104,101 @@ export const App: React.FC = () => {
   // Handle form submission / manual re-run
   const handleRunAnalysis = async (input: InvestigationInput) => {
     setIsLoading(true);
-    try {
-      const summary = await investigationService.runInvestigation({
-        ...input,
-        scenarioId: activeScenarioId,
-      });
-      setInvestigation(summary);
-      if (summary.candidate_vessels.length > 0) {
-        setSelectedVesselMmsi(summary.candidate_vessels[0].mmsi);
+    setErrorMessage(null);
+
+    if (appMode === 'real') {
+      // REAL DATA MODE: Send uploaded SAR file to FastAPI endpoint
+      if (!input.imageFile) {
+        setErrorMessage('Please select a valid SAR image (.tiff, .png, .jpg) to analyze in Real Data Mode.');
+        setIsLoading(false);
+        return;
       }
-    } finally {
-      setIsLoading(false);
+
+      try {
+        const formData = new FormData();
+        formData.append('file', input.imageFile);
+        formData.append('latitude', input.latitude.toString());
+        formData.append('longitude', input.longitude.toString());
+        formData.append('confidence_threshold', (input.confidenceThreshold ?? 0.50).toString());
+        formData.append('resolution', '10.0');
+
+        const detection = await apiClient.analyzeSarImage(formData);
+
+        // Map real detection into InvestigationSummary structure
+        // Subsequent modules (Drift, AIS, Attribution) are denoted as uncomputed for Phase 2
+        const timestampIso = `${input.observationDate}T${input.observationTime}:00Z`;
+        const realSummary: InvestigationSummary = {
+          investigation_id: `REAL-${Date.now().toString(36).toUpperCase()}`,
+          status: 'completed',
+          created_at: new Date().toISOString(),
+          satellite_observation: {
+            image_id: input.imageFile.name,
+            timestamp: timestampIso,
+            latitude: detection.centroid.latitude,
+            longitude: detection.centroid.longitude,
+            image_path: input.imageFile.name,
+            sensor: 'Sentinel-1A C-SAR',
+            resolution: 10.0,
+          },
+          spill_detection: detection,
+          environmental_snapshot: {
+            timestamp: timestampIso,
+            latitude: detection.centroid.latitude,
+            longitude: detection.centroid.longitude,
+            wind_u: 0,
+            wind_v: 0,
+            current_u: 0,
+            current_v: 0,
+          },
+          drift_result: {
+            source_centroid: detection.centroid,
+            particle_count: 0,
+            drift_duration_hours: 0,
+            release_time_window: {
+              earliest: timestampIso,
+              most_probable: timestampIso,
+              latest: timestampIso,
+              slick_age_hours_range: [0, 0],
+            },
+            source_region: { type: 'Polygon', coordinates: [] },
+            particle_trajectories: [],
+            uncertainty: {
+              spatial_radius_km: 0,
+              major_semi_axis_km: 0,
+              minor_semi_axis_km: 0,
+              diffusion_coefficient: 0,
+              confidence_level: 0,
+            },
+          },
+          candidate_vessels: [],
+          top_candidate: null,
+          insufficient_evidence_reason: detection.detected
+            ? null
+            : 'No oil spill detected in the uploaded SAR scene above the confidence threshold.',
+        };
+
+        setInvestigation(realSummary);
+        setSelectedVesselMmsi(null);
+      } catch (err: unknown) {
+        const msg = (err as Error).message || 'SAR analysis request failed.';
+        setErrorMessage(msg);
+      } finally {
+        setIsLoading(false);
+      }
+    } else {
+      // DEMO MODE: Run existing MockInvestigationAdapter
+      try {
+        const summary = await investigationService.runInvestigation({
+          ...input,
+          scenarioId: activeScenarioId,
+        });
+        setInvestigation(summary);
+        if (summary.candidate_vessels.length > 0) {
+          setSelectedVesselMmsi(summary.candidate_vessels[0].mmsi);
+        }
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -109,16 +231,76 @@ export const App: React.FC = () => {
 
   return (
     <div className="app-container">
-      {/* 1. Header with SIH branding, quick action buttons, scenario switcher & workflow breadcrumbs */}
+      {/* 1. Header with SIH branding, quick action buttons, scenario switcher, mode toggle & workflow breadcrumbs */}
       <Header
         investigationId={investigation.investigation_id}
         activeScenarioId={activeScenarioId}
         scenarios={scenarios}
         onSelectScenario={handleSelectScenario}
-        activeStepIndex={isInsufficientEvidence ? 4 : 5}
+        activeStepIndex={appMode === 'real' ? 1 : isInsufficientEvidence ? 4 : 5}
         onOpenJudgeDemo={() => setIsJudgeDemoModalOpen(true)}
         onOpenValidation={() => setIsValidationModalOpen(true)}
+        appMode={appMode}
+        onToggleMode={handleToggleMode}
+        backendOnline={backendOnline}
       />
+
+      {/* Error Alert Banner */}
+      {errorMessage && (
+        <div
+          className="error-alert-banner"
+          style={{
+            background: '#450a0a',
+            border: '1px solid #ef4444',
+            borderRadius: '6px',
+            padding: '0.85rem 1.25rem',
+            margin: '0.75rem 1.5rem',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            color: '#fca5a5',
+            fontSize: '0.88rem',
+          }}
+        >
+          <div>
+            <strong style={{ color: '#ffffff', marginRight: '0.5rem' }}>Analysis Error:</strong>
+            <span>{errorMessage}</span>
+          </div>
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+            {appMode === 'real' && (
+              <button
+                type="button"
+                onClick={() => handleToggleMode('demo')}
+                style={{
+                  background: '#1e293b',
+                  color: '#38bdf8',
+                  border: '1px solid #38bdf8',
+                  borderRadius: 4,
+                  padding: '3px 8px',
+                  fontSize: '0.75rem',
+                  cursor: 'pointer',
+                }}
+              >
+                Switch to Demo Mode
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setErrorMessage(null)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#fca5a5',
+                cursor: 'pointer',
+                fontSize: '1.2rem',
+                lineHeight: 1,
+              }}
+            >
+              &times;
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 8. Insufficient Evidence State Alert (if triggered) */}
       {isInsufficientEvidence && investigation.insufficient_evidence_reason && (
@@ -144,6 +326,7 @@ export const App: React.FC = () => {
             initialCurrentV={investigation.environmental_snapshot.current_v}
             onRunAnalysis={handleRunAnalysis}
             isLoading={isLoading}
+            appMode={appMode}
           />
 
           {/* 4. Spill Characterization Card */}

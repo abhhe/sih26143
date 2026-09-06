@@ -8,6 +8,25 @@ interface SourceCardProps {
 }
 
 export const SourceCard: React.FC<SourceCardProps> = ({ drift, metocean }) => {
+  if (!drift || !drift.source_centroid || !drift.release_time_window?.earliest) {
+    return (
+      <div className="card source-card">
+        <div className="card-header">
+          <div className="card-title-group">
+            <History size={16} className="text-muted" />
+            <h3 className="card-title">Lagrangian Source Reconstruction</h3>
+          </div>
+          <span className="badge badge-low">Not available</span>
+        </div>
+        <div className="card-body">
+          <p className="text-muted" style={{ fontSize: '0.85rem', lineHeight: '1.5' }}>
+            Lagrangian drift hindcasting is not available for this observation. Phase 2 focuses strictly on SAR detection; metocean forcing (ERA5/CMEMS) and backward drift will be computed in Phase 3.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const earliestUtc = new Date(drift.release_time_window.earliest).toUTCString().replace('GMT', 'UTC');
   const latestUtc = new Date(drift.release_time_window.latest).toUTCString().replace('GMT', 'UTC');
   const peakUtc = new Date(drift.release_time_window.most_probable).toUTCString().replace('GMT', 'UTC');

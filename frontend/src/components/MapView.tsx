@@ -88,23 +88,24 @@ export const MapView: React.FC<MapViewProps> = ({
 
   // Timeline State Setup
   // Range: From release earliest (-18h) to forward forecast (+12h)
-  const obsTimeMs = useMemo(
-    () => new Date((spill as any).timestamp || drift.release_time_window.latest || drift.release_time_window.most_probable).getTime(),
-    [spill, drift]
-  );
+  const obsTimeMs = useMemo(() => {
+    const raw = (spill as any).timestamp || drift?.release_time_window?.latest || drift?.release_time_window?.most_probable;
+    return raw ? new Date(raw).getTime() : Date.now();
+  }, [spill, drift]);
 
-  const releasePeakMs = useMemo(
-    () => new Date(drift.release_time_window.most_probable).getTime(),
-    [drift]
-  );
+  const releasePeakMs = useMemo(() => {
+    const raw = drift?.release_time_window?.most_probable;
+    return raw ? new Date(raw).getTime() : obsTimeMs;
+  }, [drift, obsTimeMs]);
 
   const timelineStartMs = useMemo(() => {
+    if (!drift?.release_time_window?.earliest) return obsTimeMs - 4 * 3600 * 1000;
     const earliest = new Date(drift.release_time_window.earliest).getTime();
     return Math.min(earliest - 2 * 3600 * 1000, releasePeakMs - 4 * 3600 * 1000);
-  }, [drift, releasePeakMs]);
+  }, [drift, releasePeakMs, obsTimeMs]);
 
   const timelineEndMs = useMemo(() => {
-    return obsTimeMs + (drift.forward_trajectories?.length ? 12 : 4) * 3600 * 1000;
+    return obsTimeMs + (drift?.forward_trajectories?.length ? 12 : 4) * 3600 * 1000;
   }, [obsTimeMs, drift]);
 
   const [currentTimelineMs, setCurrentTimelineMs] = useState<number>(obsTimeMs);
@@ -132,45 +133,63 @@ export const MapView: React.FC<MapViewProps> = ({
   }, [isPlaying, timelineStartMs, timelineEndMs]);
 
   // Convert GeoJSON coordinates [lon, lat] to Leaflet [lat, lon]
+  // Convert GeoJSON coordinates [lon, lat] to Leaflet [lat, lon]
   const spillPolygonCoords = useMemo(() => {
-    if (!spill.spill_mask || !spill.spill_mask.coordinates) return [];
+    if (!spill.spill_mask || !spill.spill_mask.coordinates || spill.spill_mask.coordinates.length === 0) return [];
     const ring = spill.spill_mask.coordinates[0] as [number, number][];
+    if (!Array.isArray(ring)) return [];
     return ring.map(([lon, lat]) => [lat, lon] as [number, number]);
   }, [spill]);
 
+  // Bounding box coordinates [lat, lon]
+  const bboxCoords = useMemo(() => {
+    if (!spill.bounding_box || typeof spill.bounding_box.min_latitude !== 'number') return [];
+    const { min_latitude, min_longitude, max_latitude, max_longitude } = spill.bounding_box;
+    return [
+      [min_latitude, min_longitude],
+      [min_latitude, max_longitude],
+      [max_latitude, max_longitude],
+      [max_latitude, min_longitude],
+      [min_latitude, min_longitude],
+    ] as [number, number][];
+  }, [spill]);
+
   const sourcePolygon95Coords = useMemo(() => {
-    if (!drift.source_region || !drift.source_region.coordinates) return [];
+    if (!drift?.source_region || !drift.source_region.coordinates || !drift.source_region.coordinates.length) return [];
     const ring = drift.source_region.coordinates[0] as [number, number][];
     return ring.map(([lon, lat]) => [lat, lon] as [number, number]);
   }, [drift]);
 
   const sourcePolygon50Coords = useMemo(() => {
-    const geom = drift.source_region_50;
-    if (!geom || !geom.coordinates) return [];
+    const geom = drift?.source_region_50;
+    if (!geom || !geom.coordinates || !geom.coordinates.length) return [];
     const ring = geom.coordinates[0] as [number, number][];
     return ring.map(([lon, lat]) => [lat, lon] as [number, number]);
   }, [drift]);
 
   const sourcePolygon90Coords = useMemo(() => {
-    const geom = drift.source_region_90;
-    if (!geom || !geom.coordinates) return [];
+    const geom = drift?.source_region_90;
+    if (!geom || !geom.coordinates || !geom.coordinates.length) return [];
     const ring = geom.coordinates[0] as [number, number][];
     return ring.map(([lon, lat]) => [lat, lon] as [number, number]);
   }, [drift]);
 
   // Calculate estimated oil slick position at timeline time t
   const estimatedOilAtT = useMemo(() => {
-    // If t >= obsTimeMs, interpolate along forward forecast or stay at spill centroid
     const t = currentTimelineMs;
-    const sLat = drift.source_centroid.latitude;
-    const sLon = drift.source_centroid.longitude;
+    const sLat = drift?.source_centroid?.latitude ?? spill.centroid.latitude;
+    const sLon = drift?.source_centroid?.longitude ?? spill.centroid.longitude;
     const oLat = spill.centroid.latitude;
     const oLon = spill.centroid.longitude;
+
+    if (!drift?.particle_trajectories?.length) {
+      return { lat: oLat, lon: oLon, stage: spill.detected ? 'Detected Slick' : 'Observation Center' };
+    }
 
     if (t <= releasePeakMs) {
       return { lat: sLat, lon: sLon, stage: 'Source Release' };
     } else if (t < obsTimeMs) {
-      const progress = (t - releasePeakMs) / (obsTimeMs - releasePeakMs);
+      const progress = (t - releasePeakMs) / Math.max(1, (obsTimeMs - releasePeakMs));
       const lat = sLat + (oLat - sLat) * progress;
       const lon = sLon + (oLon - sLon) * progress;
       return { lat, lon, stage: 'Advecting Slick' };
@@ -438,9 +457,27 @@ export const MapView: React.FC<MapViewProps> = ({
           </>
         )}
 
+        {/* Bounding Box Envelope from SAR Detector */}
+        {showSpill && bboxCoords.length > 0 && (
+          <Polygon
+            positions={bboxCoords}
+            pathOptions={{
+              color: '#38bdf8',
+              weight: 1.5,
+              fillColor: '#0284c7',
+              fillOpacity: 0.08,
+              dashArray: '4, 4',
+            }}
+          >
+            <Tooltip direction="top" opacity={0.85}>
+              SAR Detection Bounding Box
+            </Tooltip>
+          </Polygon>
+        )}
+
         {/* 2. Backward Lagrangian Particles */}
         {showBackwardDrift &&
-          drift.particle_trajectories.map((pt) => {
+          drift?.particle_trajectories?.map((pt) => {
             const polylinePoints = pt.steps.map(
               (s) => [s.latitude, s.longitude] as [number, number]
             );
@@ -545,28 +582,30 @@ export const MapView: React.FC<MapViewProps> = ({
             )}
 
             {/* Source Centroid Marker */}
-            <CircleMarker
-              center={[drift.source_centroid.latitude, drift.source_centroid.longitude]}
-              radius={7}
-              pathOptions={{
-                color: '#ffffff',
-                fillColor: '#f97316',
-                fillOpacity: 1.0,
-                weight: 2,
-              }}
-            >
-              <Popup>
-                <div className="map-popup">
-                  <div className="popup-title">Reconstructed Source Centroid</div>
-                  <div>Lat: {drift.source_centroid.latitude.toFixed(4)}°N</div>
-                  <div>Lon: {drift.source_centroid.longitude.toFixed(4)}°E</div>
-                  <div>Peak Release: {new Date(drift.release_time_window.most_probable).toUTCString()}</div>
-                </div>
-              </Popup>
-              <Tooltip direction="bottom" offset={[0, 8]} opacity={0.9}>
-                Reconstructed Source Centroid
-              </Tooltip>
-            </CircleMarker>
+            {drift?.source_centroid && (
+              <CircleMarker
+                center={[drift.source_centroid.latitude, drift.source_centroid.longitude]}
+                radius={7}
+                pathOptions={{
+                  color: '#ffffff',
+                  fillColor: '#f97316',
+                  fillOpacity: 1.0,
+                  weight: 2,
+                }}
+              >
+                <Popup>
+                  <div className="map-popup">
+                    <div className="popup-title">Reconstructed Source Centroid</div>
+                    <div>Lat: {drift.source_centroid.latitude.toFixed(4)}°N</div>
+                    <div>Lon: {drift.source_centroid.longitude.toFixed(4)}°E</div>
+                    <div>Peak Release: {new Date(drift.release_time_window.most_probable).toUTCString()}</div>
+                  </div>
+                </Popup>
+                <Tooltip direction="bottom" offset={[0, 8]} opacity={0.9}>
+                  Reconstructed Source Centroid
+                </Tooltip>
+              </CircleMarker>
+            )}
           </>
         )}
 
@@ -667,7 +706,7 @@ export const MapView: React.FC<MapViewProps> = ({
           ))}
 
         {/* 7. Selected Vessel CPA Vector (Dashed connector line to Source Centroid) */}
-        {showCpaVector && selectedVesselObj && (
+        {showCpaVector && selectedVesselObj && drift?.source_centroid && (
           <Polyline
             positions={[
               selectedVesselObj.cpaCoord,
