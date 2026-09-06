@@ -1,5 +1,15 @@
 import { API_BASE_URL } from '../config/api';
-import { SpillDetection, ValidationMetrics, DriftResult, EnvironmentalState } from '../types/contracts';
+import {
+  SpillDetection,
+  ValidationMetrics,
+  DriftResult,
+  EnvironmentalState,
+  SpillGeometry,
+  CoordinatePoint,
+  DriftUncertainty,
+  ReleaseTimeWindow,
+  ParticleTrajectory,
+} from '../types/contracts';
 
 export interface HealthResponse {
   status: string;
@@ -28,9 +38,11 @@ export interface DriftSimulationRequest {
   area_km2?: number;
   observation_time?: string;
   max_hindcast_hours?: number;
+  backward_hours?: number;
   forecast_hours?: number;
   particle_count?: number;
   timestep_minutes?: number;
+  time_step_minutes?: number;
   leeway_factor?: number;
   leeway_deflection_deg?: number;
   horizontal_diffusivity?: number;
@@ -49,6 +61,20 @@ export interface DriftSimulationResponse {
   drift_result: DriftResult;
   environmental_snapshot: EnvironmentalState;
   model_parameters: Record<string, any>;
+}
+
+export interface SourceReconstructionResponse {
+  source_region: SpillGeometry;
+  source_region_50?: SpillGeometry;
+  source_region_90?: SpillGeometry;
+  source_centroid: CoordinatePoint;
+  uncertainty: DriftUncertainty;
+  release_window: ReleaseTimeWindow;
+  backward_trajectory: ParticleTrajectory[];
+  forward_trajectory?: ParticleTrajectory[];
+  environmental_snapshot: EnvironmentalState;
+  quality: Record<string, any>;
+  scientific_disclaimer: string;
 }
 
 export class ApiError extends Error {
@@ -258,6 +284,38 @@ export const apiClient = {
       }
       if (err instanceof ApiError) throw err;
       throw new ApiError(`Error connecting to drift simulation API: ${(err as Error).message}`, 0);
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
+  /**
+   * Run backward Lagrangian source reconstruction to estimate Probable Source Region (/api/drift/source-reconstruction).
+   */
+  async reconstructSource(request: DriftSimulationRequest, timeoutMs = 25000): Promise<SourceReconstructionResponse> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/drift/source-reconstruction`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new ApiError(errData.detail || `Source reconstruction failed (HTTP ${res.status})`, res.status);
+      }
+
+      return (await res.json()) as SourceReconstructionResponse;
+    } catch (err: unknown) {
+      if ((err as Error).name === 'AbortError') {
+        throw new ApiError(`Source reconstruction timed out after ${timeoutMs}ms`, 408);
+      }
+      if (err instanceof ApiError) throw err;
+      throw new ApiError(`Error connecting to source reconstruction API: ${(err as Error).message}`, 0);
     } finally {
       clearTimeout(timer);
     }

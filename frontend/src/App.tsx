@@ -158,38 +158,67 @@ export const App: React.FC = () => {
           current_v: 0,
         };
 
-        // Phase 3: If an oil spill is confirmed, advect particles backward using numerical Lagrangian RK2 drift engine
+        // Phase 4: If an oil spill is confirmed, run real backward Lagrangian source reconstruction (RK2)
         if (detection.detected) {
           try {
-            const driftSim = await apiClient.simulateDrift({
+            const recon = await apiClient.reconstructSource({
               spill: detection,
               observation_time: timestampIso,
-              max_hindcast_hours: 18.0,
-              forecast_hours: 12.0,
+              backward_hours: 18.0,
+              time_step_minutes: 30.0,
               particle_count: 100,
-              timestep_minutes: 30.0,
+              forecast_hours: 12.0,
               wind_speed_ms: input.windSpeedMs,
               wind_direction_deg: input.windDirectionDeg,
               current_speed_ms: input.currentSpeedMs,
               current_direction_deg: input.currentDirectionDeg,
             });
-            driftResult = driftSim.drift_result;
-            envSnapshot = driftSim.environmental_snapshot;
-          } catch (driftErr) {
-            console.warn('Drift simulation error:', driftErr);
-            // Fallback to point metocean snapshot if full drift simulation fails
+            driftResult = {
+              source_region: recon.source_region,
+              source_region_50: recon.source_region_50,
+              source_region_90: recon.source_region_90,
+              source_centroid: recon.source_centroid,
+              uncertainty: recon.uncertainty,
+              release_time_window: recon.release_window,
+              particle_trajectories: recon.backward_trajectory,
+              forward_trajectories: recon.forward_trajectory,
+              particle_count: recon.backward_trajectory.length,
+              drift_duration_hours: 18.0,
+            };
+            envSnapshot = recon.environmental_snapshot;
+          } catch (reconErr) {
+            console.warn('Source reconstruction error, trying simulateDrift fallback:', reconErr);
             try {
-              envSnapshot = await apiClient.getMetoceanPoint({
-                latitude: detection.centroid.latitude,
-                longitude: detection.centroid.longitude,
-                timestamp: timestampIso,
+              const driftSim = await apiClient.simulateDrift({
+                spill: detection,
+                observation_time: timestampIso,
+                max_hindcast_hours: 18.0,
+                forecast_hours: 12.0,
+                particle_count: 100,
+                timestep_minutes: 30.0,
                 wind_speed_ms: input.windSpeedMs,
                 wind_direction_deg: input.windDirectionDeg,
                 current_speed_ms: input.currentSpeedMs,
                 current_direction_deg: input.currentDirectionDeg,
               });
-            } catch {
-              // ignore fallback error
+              driftResult = driftSim.drift_result;
+              envSnapshot = driftSim.environmental_snapshot;
+            } catch (driftErr) {
+              console.warn('Drift simulation fallback failed:', driftErr);
+              // Fallback to point metocean snapshot
+              try {
+                envSnapshot = await apiClient.getMetoceanPoint({
+                  latitude: detection.centroid.latitude,
+                  longitude: detection.centroid.longitude,
+                  timestamp: timestampIso,
+                  wind_speed_ms: input.windSpeedMs,
+                  wind_direction_deg: input.windDirectionDeg,
+                  current_speed_ms: input.currentSpeedMs,
+                  current_direction_deg: input.currentDirectionDeg,
+                });
+              } catch {
+                // ignore fallback error
+              }
             }
           }
         }
@@ -234,7 +263,7 @@ export const App: React.FC = () => {
         });
 
         // If user specified environmental overrides in demo mode and backend is online,
-        // dynamically re-run drift simulation with the real Lagrangian engine to demonstrate sensitivity
+        // dynamically re-run backward source reconstruction with the real Lagrangian engine to demonstrate sensitivity
         if (
           backendOnline &&
           (input.windSpeedMs !== undefined ||
@@ -244,21 +273,33 @@ export const App: React.FC = () => {
         ) {
           try {
             const timestampIso = `${input.observationDate}T${input.observationTime}:00Z`;
-            const driftSim = await apiClient.simulateDrift({
+            const recon = await apiClient.reconstructSource({
               spill: summary.spill_detection,
               observation_time: timestampIso,
-              max_hindcast_hours: summary.drift_result.drift_duration_hours || 18.0,
-              forecast_hours: 12.0,
+              backward_hours: summary.drift_result.drift_duration_hours || 18.0,
+              time_step_minutes: 30.0,
               particle_count: summary.drift_result.particle_count || 100,
+              forecast_hours: 12.0,
               wind_speed_ms: input.windSpeedMs,
               wind_direction_deg: input.windDirectionDeg,
               current_speed_ms: input.currentSpeedMs,
               current_direction_deg: input.currentDirectionDeg,
             });
-            summary.drift_result = driftSim.drift_result;
-            summary.environmental_snapshot = driftSim.environmental_snapshot;
+            summary.drift_result = {
+              source_region: recon.source_region,
+              source_region_50: recon.source_region_50,
+              source_region_90: recon.source_region_90,
+              source_centroid: recon.source_centroid,
+              uncertainty: recon.uncertainty,
+              release_time_window: recon.release_window,
+              particle_trajectories: recon.backward_trajectory,
+              forward_trajectories: recon.forward_trajectory,
+              particle_count: recon.backward_trajectory.length,
+              drift_duration_hours: summary.drift_result.drift_duration_hours || 18.0,
+            };
+            summary.environmental_snapshot = recon.environmental_snapshot;
           } catch (driftErr) {
-            console.warn('Custom drift simulation in demo mode failed, using preset:', driftErr);
+            console.warn('Custom source reconstruction in demo mode failed, using preset:', driftErr);
           }
         }
 

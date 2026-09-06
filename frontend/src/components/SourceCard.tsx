@@ -20,7 +20,7 @@ export const SourceCard: React.FC<SourceCardProps> = ({ drift, metocean }) => {
         </div>
         <div className="card-body">
           <p className="text-muted" style={{ fontSize: '0.85rem', lineHeight: '1.5' }}>
-            Lagrangian drift hindcasting is not available for this observation. Phase 2 focuses strictly on SAR detection; metocean forcing (ERA5/CMEMS) and backward drift will be computed in Phase 3.
+            Lagrangian source reconstruction is not computed for this observation. Run analysis on a confirmed SAR slick or enter coordinates with forcing parameters to simulate backward transport.
           </p>
         </div>
       </div>
@@ -39,7 +39,7 @@ export const SourceCard: React.FC<SourceCardProps> = ({ drift, metocean }) => {
       <div className="card-header">
         <div className="card-title-group">
           <History size={16} className="text-amber" />
-          <h3 className="card-title">Lagrangian Source Reconstruction</h3>
+          <h3 className="card-title">Probable Source Reconstruction</h3>
         </div>
         <span className="badge badge-amber font-mono">
           -{drift.drift_duration_hours}h Hindcast ({drift.particle_count} particles)
@@ -50,14 +50,14 @@ export const SourceCard: React.FC<SourceCardProps> = ({ drift, metocean }) => {
         {/* Source Centroid & Uncertainty Radius */}
         <div className="stats-grid">
           <div className="stat-box">
-            <span className="stat-label">Source Centroid</span>
+            <span className="stat-label">Probable Source Centroid</span>
             <span className="stat-value font-mono text-amber">
               {drift.source_centroid.latitude.toFixed(4)}°N, {drift.source_centroid.longitude.toFixed(4)}°E
             </span>
           </div>
 
           <div className="stat-box">
-            <span className="stat-label">Uncertainty Radius (95%)</span>
+            <span className="stat-label">Reconstruction Uncertainty (95%)</span>
             <span className="stat-value font-mono">
               &plusmn;{drift.uncertainty.spatial_radius_km} <span className="stat-unit">km</span>
             </span>
@@ -104,11 +104,11 @@ export const SourceCard: React.FC<SourceCardProps> = ({ drift, metocean }) => {
           </div>
         </div>
 
-        {/* Physics Note */}
+        {/* Physics Note with Scientific Limitations */}
         <div className="physics-note">
           <Activity size={12} className="inline-icon text-muted" />
           <span>
-            Monte Carlo backward advection via Runge-Kutta 2nd order with 3.2% wind leeway and horizontal eddy diffusivity D<sub>h</sub> = {drift.uncertainty.diffusion_coefficient} m²/s.
+            Runge-Kutta 2nd-order (RK2) backward Lagrangian ensemble (3.2% wind leeway + CMEMS currents + D<sub>h</sub> = {drift.uncertainty.diffusion_coefficient} m²/s). Reconstruction uncertainty reflects reanalysis spatial resolution, leeway coefficient variance, and sub-mesoscale eddy turbulence.
           </span>
         </div>
       </div>

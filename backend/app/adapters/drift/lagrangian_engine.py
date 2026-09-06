@@ -70,6 +70,21 @@ class LagrangianDriftEngine(IHindcastDriftEngine):
         Execute backward Lagrangian hindcast to estimate source region and release window.
         Also calculates forward forecast trajectories for situational awareness.
         """
+        if max_hindcast_hours <= 0.0:
+            raise ValueError(f"Backward hindcast duration must be greater than zero, got {max_hindcast_hours}")
+        if timestep_minutes <= 0.0:
+            raise ValueError(f"Timestep minutes must be greater than zero, got {timestep_minutes}")
+        if particle_count < 1:
+            raise ValueError(f"Particle count must be at least 1, got {particle_count}")
+        if not (-90.0 <= spill.centroid.latitude <= 90.0) or not (-180.0 <= spill.centroid.longitude <= 180.0):
+            raise ValueError(f"Spill centroid ({spill.centroid.latitude}, {spill.centroid.longitude}) out of geographic bounds.")
+
+        # Ensure observation_time is standardized to UTC
+        if observation_time.tzinfo is None:
+            obs_time_utc = observation_time.replace(tzinfo=timezone.utc)
+        else:
+            obs_time_utc = observation_time.astimezone(timezone.utc)
+
         # Set seed for determinism
         rng = np.random.default_rng(random_seed)
 
@@ -92,14 +107,14 @@ class LagrangianDriftEngine(IHindcastDriftEngine):
 
         # 2. Backward Hindcast Simulation (-dt)
         dt_seconds = timestep_minutes * 60.0
-        hindcast_steps = int((max_hindcast_hours * 3600.0) / dt_seconds)
+        hindcast_steps = max(1, int(round((max_hindcast_hours * 3600.0) / dt_seconds)))
 
         backward_trajectories = await self._run_simulation(
             start_lats=initial_lats,
             start_lons=initial_lons,
             alphas=particle_alphas,
             thetas=particle_thetas,
-            base_time=observation_time,
+            base_time=obs_time_utc,
             dt_seconds=dt_seconds,
             total_steps=hindcast_steps,
             direction=-1,  # Backward in time
@@ -109,20 +124,22 @@ class LagrangianDriftEngine(IHindcastDriftEngine):
         )
 
         # 3. Forward Forecast Simulation (+dt)
-        forecast_steps = int((forecast_hours * 3600.0) / dt_seconds)
-        forward_trajectories = await self._run_simulation(
-            start_lats=initial_lats,
-            start_lons=initial_lons,
-            alphas=particle_alphas,
-            thetas=particle_thetas,
-            base_time=observation_time,
-            dt_seconds=dt_seconds,
-            total_steps=forecast_steps,
-            direction=1,  # Forward in time
-            diffusivity=diffusivity,
-            metocean_provider=metocean_provider,
-            rng=rng,
-        )
+        forecast_steps = max(0, int(round((forecast_hours * 3600.0) / dt_seconds)))
+        forward_trajectories = []
+        if forecast_steps > 0:
+            forward_trajectories = await self._run_simulation(
+                start_lats=initial_lats,
+                start_lons=initial_lons,
+                alphas=particle_alphas,
+                thetas=particle_thetas,
+                base_time=obs_time_utc,
+                dt_seconds=dt_seconds,
+                total_steps=forecast_steps,
+                direction=1,  # Forward in time
+                diffusivity=diffusivity,
+                metocean_provider=metocean_provider,
+                rng=rng,
+            )
 
         # 4. Source Envelope & Uncertainty Estimation at Hindcast Horizon
         source_centroid, source_polygon, uncertainty, source_polygon_50, source_polygon_90 = self._estimate_source_envelope(
@@ -132,7 +149,7 @@ class LagrangianDriftEngine(IHindcastDriftEngine):
 
         # 5. Release-Time Window Calculation
         release_window = self._estimate_release_window(
-            observation_time=observation_time,
+            observation_time=obs_time_utc,
             hindcast_hours=max_hindcast_hours,
         )
 
